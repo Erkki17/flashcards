@@ -29,13 +29,20 @@ const SUPABASE_URL = 'https://myglcqwubjkistderntl.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im15Z2xjcXd1YmpraXN0ZGVybnRsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgxMzUyODgsImV4cCI6MjA5MzcxMTI4OH0.x2V0VK2hLIa70bOfMdQvunMzAIjMgJGXRIvycTgdWIY';
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-// Module-level session reference — updated by auth listener, read by db helpers
+// Module-level session reference — updated by auth listener
 let _session = null;
-const getUserId = () => _session?.user?.id ?? null;
+
+// Get user ID — first from cached _session, then directly from Supabase client
+async function getUserId() {
+  if (_session?.user?.id) return _session.user.id;
+  const { data: { session } } = await sb.auth.getSession();
+  _session = session;
+  return session?.user?.id ?? null;
+}
 
 // Supabase DB helpers (fire-and-forget — components don't need to await)
 async function dbSaveCard(card) {
-  const uid = getUserId();
+  const uid = await getUserId();
   if (!uid) return;
   const { error } = await sb.from('cards').upsert({
     id: String(card.id), user_id: uid,
@@ -47,7 +54,7 @@ async function dbSaveCard(card) {
 }
 
 async function dbDeleteCard(id) {
-  const uid = getUserId();
+  const uid = await getUserId();
   if (!uid) return;
   const { error } = await sb.from('cards').delete()
     .eq('id', String(id)).eq('user_id', uid);
@@ -65,7 +72,7 @@ async function dbLoadCards() {
 }
 
 async function dbRecordStudy(wasCorrect) {
-  const uid = getUserId();
+  const uid = await getUserId();
   if (!uid) return;
   const today = new Date().toISOString().slice(0, 10);
   const { data } = await sb.from('study_history').select('*')
@@ -84,7 +91,7 @@ async function dbRecordStudy(wasCorrect) {
 }
 
 async function dbLoadHistory() {
-  const uid = getUserId();
+  const uid = await getUserId();
   if (!uid) return null;
   const { data, error } = await sb.from('study_history').select('*').eq('user_id', uid);
   if (error) return null;
