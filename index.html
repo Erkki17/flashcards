@@ -63,12 +63,12 @@ async function dbDeleteCard(id) {
 
 async function dbLoadCards() {
   const { data, error } = await sb.from('cards').select('*').order('created_at');
-  if (error) { console.error('dbLoadCards:', error.message); return null; }
-  return data.map(r => ({
+  if (error) { console.error('dbLoadCards:', error.message); return { cards: null, errorMsg: error.message }; }
+  return { cards: data.map(r => ({
     id: r.id, front: r.front, back: r.back,
     interval: r.interval, repetitions: r.repetitions,
     easeFactor: r.ease_factor, nextReview: r.next_review,
-  }));
+  })), errorMsg: null };
 }
 
 async function dbRecordStudy(wasCorrect) {
@@ -1177,13 +1177,13 @@ function App() {
       if (!session) { setSyncError('Ei istuntoa — kirjaudu uudelleen sisään'); return; }
       _session = session;
 
-      const dbCards = await dbLoadCards();
+      const { cards: dbCards, errorMsg } = await dbLoadCards();
       if (dbCards === null) {
         // Network error — fall back to localStorage
         const local = loadCards();
         const fallback = local || PRELOADED.map(p => newCard(p.front, p.back));
         setCards(fallback); saveCards(fallback);
-        setSyncError('Verkkovirhe — käytetään paikallista tallennusta');
+        setSyncError('DB-virhe: ' + errorMsg);
         return;
       }
       if (dbCards.length === 0) {
@@ -1192,7 +1192,7 @@ function App() {
         const toUpload = (local && local.length > 0)
           ? local
           : PRELOADED.map(p => newCard(p.front, p.back));
-        const results = await Promise.all(toUpload.map(c => dbSaveCard(c)));
+        await Promise.all(toUpload.map(c => dbSaveCard(c)));
         setCards(toUpload); saveCards(toUpload);
       } else {
         setCards(dbCards); saveCards(dbCards);
