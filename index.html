@@ -32,7 +32,25 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 // Module-level session reference — updated by auth listener
 let _session = null;
 
-// Get user ID — first from cached _session, then directly from Supabase client
+// REST API helper — uses session token directly, bypasses client session issues
+async function apiFetch(path, options = {}) {
+  const { data: { session } } = await sb.auth.getSession();
+  if (session) _session = session;
+  const headers = {
+    'apikey': SUPABASE_KEY,
+    'Content-Type': 'application/json',
+    ...(session ? { 'Authorization': `Bearer ${session.access_token}` } : {}),
+    ...(options.headers || {}),
+  };
+  const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, { ...options, headers });
+  if (res.status === 204 || res.status === 201) return null;
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ message: res.statusText }));
+    throw new Error(err.message || res.statusText);
+  }
+  return res.json();
+}
+
 async function getUserId() {
   if (_session?.user?.id) return _session.user.id;
   const { data: { session } } = await sb.auth.getSession();
@@ -44,60 +62,77 @@ async function getUserId() {
 async function dbSaveCard(card) {
   const uid = await getUserId();
   if (!uid) return;
-  const { error } = await sb.from('cards').upsert({
-    id: String(card.id), user_id: uid,
-    front: card.front, back: card.back,
-    interval: card.interval, repetitions: card.repetitions,
-    ease_factor: card.easeFactor, next_review: card.nextReview,
-  });
-  if (error) console.error('dbSaveCard:', error.message);
+  try {
+    await apiFetch('/cards', {
+      method: 'POST',
+      headers: { 'Prefer': 'resolution=merge-duplicates' },
+      body: JSON.stringify({
+        id: String(card.id), user_id: uid,
+        front: card.front, back: card.back,
+        interval: card.interval, repetitions: card.repetitions,
+        ease_factor: card.easeFactor, next_review: card.nextReview,
+      }),
+    });
+  } catch(e) { console.error('dbSaveCard:', e.message); }
 }
 
 async function dbDeleteCard(id) {
   const uid = await getUserId();
   if (!uid) return;
-  const { error } = await sb.from('cards').delete()
-    .eq('id', String(id)).eq('user_id', uid);
-  if (error) console.error('dbDeleteCard:', error.message);
+  try {
+    await apiFetch(`/cards?id=eq.${encodeURIComponent(String(id))}&user_id=eq.${uid}`, {
+      method: 'DELETE',
+    });
+  } catch(e) { console.error('dbDeleteCard:', e.message); }
 }
 
 async function dbLoadCards() {
-  const { data, error } = await sb.from('cards').select('*').order('created_at');
-  if (error) { console.error('dbLoadCards:', error.message); return { cards: null, errorMsg: error.message }; }
-  return { cards: data.map(r => ({
-    id: r.id, front: r.front, back: r.back,
-    interval: r.interval, repetitions: r.repetitions,
-    easeFactor: r.ease_factor, nextReview: r.next_review,
-  })), errorMsg: null };
+  try {
+    const data = await apiFetch('/cards?select=*&order=created_at');
+    return { cards: (data || []).map(r => ({
+      id: r.id, front: r.front, back: r.back,
+      interval: r.interval, repetitions: r.repetitions,
+      easeFactor: r.ease_factor, nextReview: r.next_review,
+    })), errorMsg: null };
+  } catch(e) {
+    console.error('dbLoadCards:', e.message);
+    return { cards: null, errorMsg: e.message };
+  }
 }
 
 async function dbRecordStudy(wasCorrect) {
   const uid = await getUserId();
   if (!uid) return;
   const today = new Date().toISOString().slice(0, 10);
-  const { data } = await sb.from('study_history').select('*')
-    .eq('user_id', uid).eq('date', today).maybeSingle();
-  if (data) {
-    await sb.from('study_history').update({
-      reviewed: data.reviewed + 1,
-      correct: data.correct + (wasCorrect ? 1 : 0),
-    }).eq('id', data.id);
-  } else {
-    await sb.from('study_history').insert({
-      user_id: uid, date: today,
-      reviewed: 1, correct: wasCorrect ? 1 : 0,
-    });
-  }
+  try {
+    const existing = await apiFetch(`/study_history?user_id=eq.${uid}&date=eq.${today}&select=*`);
+    if (existing && existing.length > 0) {
+      const rec = existing[0];
+      await apiFetch(`/study_history?id=eq.${rec.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          reviewed: rec.reviewed + 1,
+          correct: rec.correct + (wasCorrect ? 1 : 0),
+        }),
+      });
+    } else {
+      await apiFetch('/study_history', {
+        method: 'POST',
+        body: JSON.stringify({ user_id: uid, date: today, reviewed: 1, correct: wasCorrect ? 1 : 0 }),
+      });
+    }
+  } catch(e) { console.error('dbRecordStudy:', e.message); }
 }
 
 async function dbLoadHistory() {
   const uid = await getUserId();
   if (!uid) return null;
-  const { data, error } = await sb.from('study_history').select('*').eq('user_id', uid);
-  if (error) return null;
-  const h = {};
-  data.forEach(r => { h[r.date] = { reviewed: r.reviewed, correct: r.correct }; });
-  return h;
+  try {
+    const data = await apiFetch(`/study_history?user_id=eq.${uid}&select=*`);
+    const h = {};
+    (data || []).forEach(r => { h[r.date] = { reviewed: r.reviewed, correct: r.correct }; });
+    return h;
+  } catch(e) { return null; }
 }
 
 // ── Constants & preloaded data ────────────────────────────────────────────────
