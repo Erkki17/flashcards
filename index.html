@@ -69,6 +69,9 @@ async function dbSaveCard(card) {
       body: JSON.stringify({
         id: String(card.id), user_id: uid,
         front: card.front, back: card.back,
+        example: card.example || null,
+        deck: card.deck || 'yleinen',
+        stage: card.stage || 1,
         interval: card.interval, repetitions: card.repetitions,
         ease_factor: card.easeFactor, next_review: card.nextReview,
       }),
@@ -91,6 +94,9 @@ async function dbLoadCards() {
     const data = await apiFetch('/cards?select=*&order=created_at');
     return { cards: (data || []).map(r => ({
       id: r.id, front: r.front, back: r.back,
+      example: r.example || null,
+      deck: r.deck || 'yleinen',
+      stage: r.stage || 1,
       interval: r.interval, repetitions: r.repetitions,
       easeFactor: r.ease_factor, nextReview: r.next_review,
     })), errorMsg: null };
@@ -2055,7 +2061,7 @@ function App() {
         return;
       }
       if (dbCards.length === 0) {
-        // First login — migrate any existing localStorage cards
+        // First login — migrate any existing localStorage cards (including deck/stage/example)
         const local = loadCards();
         const toUpload = (local && local.length > 0)
           ? local
@@ -2063,12 +2069,8 @@ function App() {
         await Promise.all(toUpload.map(c => dbSaveCard(c)));
         setCards(toUpload); saveCards(toUpload);
       } else {
-        // Merge deck info from localStorage (deck field is not stored in Supabase)
-        const localCards = loadCards();
-        const localDeckMap = {};
-        (localCards||[]).forEach(c => { if(c.deck) localDeckMap[c.id] = c.deck; });
-        const withDecks = dbCards.map(c => ({ ...c, deck: localDeckMap[c.id] || 'yleinen' }));
-        setCards(withDecks); saveCards(withDecks);
+        // DB is the source of truth — deck, stage, example all come from DB now
+        setCards(dbCards); saveCards(dbCards);
       }
     } catch(e) {
       setSyncError('Virhe: ' + e.message);
