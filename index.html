@@ -142,32 +142,65 @@ const DIRECTION_KEY = 'flashcards_direction';
 const MIGRATE_KEY   = 'flashcards_migrated_v2';
 const HISTORY_KEY   = 'flashcards_history';
 
+const XP_KEY      = 'flashcards_xp_v1';
+const STREAK_KEY  = 'flashcards_streak_v1';
+const ACHIEVE_KEY = 'flashcards_achieve_v1';
+const FIRST_KEY   = 'flashcards_first_launch';
+const DAILY_GOAL  = 50;
+const RECOVERY_GOAL = 100;
+const COURSE_DATE = new Date('2026-09-01');
+const XP_BY_Q = { 0: 1, 1: 2, 3: 3 };
+const LEVELS = [
+  { min:0,    name:'Aloittelija'    },
+  { min:100,  name:'Harjoittelija' },
+  { min:250,  name:'Kehittyjä'     },
+  { min:500,  name:'Taitaja'       },
+  { min:850,  name:'Edistynyt'     },
+  { min:1300, name:'Osaaja'        },
+  { min:1850, name:'Asiantuntija'  },
+  { min:2500, name:'Ammattilainen' },
+  { min:3300, name:'Ekspertti'     },
+  { min:4300, name:'Mestari'       },
+];
+const FINANCE_FRONTS = new Set(['revenue','equity','liability','asset','portfolio','yield','dividend','volatility','liquidity','leverage']);
+const TIER_COLORS = ['#CD7F32','#C0C0C0','#FFD700'];
+const ACHIEVEMENTS_DEF = [
+  { id:'cards_reviewed', icon:'🃏', name:'Kortinkerääjä', tiers:[{goal:50,lbl:'50 korttia'},{goal:500,lbl:'500 korttia'},{goal:2000,lbl:'2000 korttia'}]},
+  { id:'streak',         icon:'🔥', name:'Putken pitäjä', tiers:[{goal:7,lbl:'7 päivää'},{goal:30,lbl:'30 päivää'},{goal:100,lbl:'100 päivää'}]},
+  { id:'finance',        icon:'🎓', name:'Rahoittaja',    tiers:[{goal:10,lbl:'10 sanaa'},{goal:25,lbl:'25 sanaa'},{goal:999,lbl:'Kaikki'}]},
+  { id:'session',        icon:'⚡', name:'Nopea oppija',  tiers:[{goal:30,lbl:'30 sessiossa'},{goal:75,lbl:'75 sessiossa'},{goal:150,lbl:'150 sessiossa'}]},
+  { id:'created',        icon:'📚', name:'Sanaseppä',     tiers:[{goal:25,lbl:'25 luotu'},{goal:100,lbl:'100 luotu'},{goal:250,lbl:'250 luotu'}]},
+  { id:'stage2',         icon:'🧠', name:'Mestarioppija', tiers:[{goal:10,lbl:'10 sanaa'},{goal:50,lbl:'50 sanaa'},{goal:150,lbl:'150 sanaa'}]},
+  { id:'recovery',       icon:'💪', name:'Sinnikäs',      tiers:[{goal:1,lbl:'1 kertaa'},{goal:5,lbl:'5 kertaa'},{goal:10,lbl:'10 kertaa'}]},
+  { id:'level',          icon:'🏆', name:'Ekspertti',     tiers:[{goal:5,lbl:'Taso 5'},{goal:8,lbl:'Taso 8'},{goal:10,lbl:'Taso 10'}]},
+];
+
 const PRELOADED = [
-  {"front":"send — sent / sent","back":"lähettää"},
-  {"front":"choose — chose / chosen","back":"valita"},
-  {"front":"write — wrote / written","back":"kirjoittaa"},
-  {"front":"take — took / taken","back":"ottaa"},
-  {"front":"give — gave / given","back":"antaa"},
-  {"front":"find — found / found","back":"löytää"},
-  {"front":"think — thought / thought","back":"ajatella"},
-  {"front":"buy — bought / bought","back":"ostaa"},
-  {"front":"sell — sold / sold","back":"myydä"},
-  {"front":"hold — held / held","back":"pitää / omistaa"},
-  {"front":"rise — rose / risen","back":"nousta"},
-  {"front":"fall — fell / fallen","back":"laskea"},
-  {"front":"make — made / made","back":"tehdä"},
-  {"front":"become — became / become","back":"tulla joksikin"},
-  {"front":"begin — began / begun","back":"aloittaa"},
-  {"front":"revenue","back":"liikevaihto — total income from sales"},
-  {"front":"equity","back":"oma pääoma — ownership value in a company"},
-  {"front":"liability","back":"velka / vastuu — what a company owes"},
-  {"front":"asset","back":"omaisuuserä — what a company owns"},
-  {"front":"portfolio","back":"sijoitussalkku — collection of investments"},
-  {"front":"yield","back":"tuotto — return on an investment"},
-  {"front":"dividend","back":"osinko — profit paid to shareholders"},
-  {"front":"volatility","back":"volatiliteetti — degree of price variation"},
-  {"front":"liquidity","back":"likviditeetti — ease of converting to cash"},
-  {"front":"leverage","back":"velkavipu — using borrowed capital to invest"},
+  {front:"send — sent / sent",      back:"lähettää",            example:"Please send me the report by Friday."},
+  {front:"choose — chose / chosen", back:"valita",              example:"She chose the best candidate for the role."},
+  {front:"write — wrote / written", back:"kirjoittaa",          example:"He wrote a detailed financial report."},
+  {front:"take — took / taken",     back:"ottaa",               example:"The CEO took a bold decision."},
+  {front:"give — gave / given",     back:"antaa",               example:"The bank gave us a loan at 3% interest."},
+  {front:"find — found / found",    back:"löytää",              example:"We found a solution to the budget problem."},
+  {front:"think — thought / thought",back:"ajatella",           example:"I think this investment carries high risk."},
+  {front:"buy — bought / bought",   back:"ostaa",               example:"They bought shares at a low price."},
+  {front:"sell — sold / sold",      back:"myydä",               example:"He sold his entire portfolio before the crash."},
+  {front:"hold — held / held",      back:"pitää / omistaa",     example:"She held her position despite market pressure."},
+  {front:"rise — rose / risen",     back:"nousta",              example:"Interest rates have risen sharply this quarter."},
+  {front:"fall — fell / fallen",    back:"laskea",              example:"The stock has fallen 30% since January."},
+  {front:"make — made / made",      back:"tehdä",               example:"The company made a profit for the first time."},
+  {front:"become — became / become",back:"tulla joksikin",      example:"She became the CFO after years of hard work."},
+  {front:"begin — began / begun",   back:"aloittaa",            example:"The merger negotiations began last month."},
+  {front:"revenue",    back:"liikevaihto — total income from sales",        example:"The company's revenue grew 20% last year."},
+  {front:"equity",     back:"oma pääoma — ownership value in a company",    example:"She holds 30% equity in the startup."},
+  {front:"liability",  back:"velka / vastuu — what a company owes",         example:"The loan appears as a liability on the balance sheet."},
+  {front:"asset",      back:"omaisuuserä — what a company owns",            example:"Real estate is considered a long-term asset."},
+  {front:"portfolio",  back:"sijoitussalkku — collection of investments",   example:"He diversified his portfolio with bonds and stocks."},
+  {front:"yield",      back:"tuotto — return on an investment",             example:"The bond offers a 5% annual yield."},
+  {front:"dividend",   back:"osinko — profit paid to shareholders",         example:"Shareholders received a €2 dividend per share."},
+  {front:"volatility", back:"volatiliteetti — degree of price variation",   example:"High volatility makes the market unpredictable."},
+  {front:"liquidity",  back:"likviditeetti — ease of converting to cash",   example:"Cash has the highest liquidity of all assets."},
+  {front:"leverage",   back:"velkavipu — using borrowed capital to invest", example:"The fund uses leverage to amplify returns."},
 ];
 
 const GRAMMAR_DRILLS = {
@@ -211,10 +244,10 @@ const GRAMMAR_DRILLS = {
 
 // ── Core helpers ──────────────────────────────────────────────────────────────
 
-function newCard(front, back) {
+function newCard(front, back, example=null) {
   return {
     id: crypto.randomUUID(),
-    front, back,
+    front, back, example,
     interval: 0, repetitions: 0, easeFactor: 2.5,
     nextReview: Date.now(),
     stage: 1,
@@ -312,6 +345,121 @@ function getStreak(history) {
     else break;
   }
   return streak;
+}
+
+// XP helpers
+function loadXP() { return parseInt(localStorage.getItem(XP_KEY)||'0',10); }
+function saveXP(xp) { localStorage.setItem(XP_KEY, String(xp)); }
+function getLevelIdx(xp) {
+  for (let i=LEVELS.length-1;i>=0;i--) if(xp>=LEVELS[i].min) return i;
+  return 0;
+}
+function getXpProgress(xp) {
+  const i=getLevelIdx(xp), cur=LEVELS[i].min;
+  const next=i<LEVELS.length-1?LEVELS[i+1].min:cur+1000;
+  return {levelIdx:i,level:i+1,name:LEVELS[i].name,xpInLevel:xp-cur,xpNeeded:next-cur,nextName:LEVELS[i+1]?.name};
+}
+
+// Streak helpers (stored in localStorage, updated on card review)
+function loadStreak() {
+  try { return JSON.parse(localStorage.getItem(STREAK_KEY)||'null')||{current:0,longest:0,lastGoalDate:null,inRecovery:false,baseStreak:0,recoveries:0}; }
+  catch { return {current:0,longest:0,lastGoalDate:null,inRecovery:false,baseStreak:0,recoveries:0}; }
+}
+function saveStreak(s) { localStorage.setItem(STREAK_KEY, JSON.stringify(s)); }
+function dateStr(offsetDays=0) {
+  const d=new Date(); d.setDate(d.getDate()+offsetDays); return d.toISOString().slice(0,10);
+}
+// Call after each review to update streak state; returns {streakData, goalJustMet, recoveryJustDone, newMilestone}
+function updateStreak(todayCount) {
+  const today=dateStr(0), yesterday=dateStr(-1), dayBefore=dateStr(-2);
+  let s=loadStreak();
+  // Validate stale state from previous days
+  if (s.lastGoalDate && s.lastGoalDate < dayBefore) {
+    if (s.inRecovery) s={...s,current:0,inRecovery:false,baseStreak:0}; // recovery failed
+    else if (s.lastGoalDate < dayBefore) s={...s,current:0,inRecovery:false}; // 2+ days missed
+  } else if (s.lastGoalDate===dayBefore && !s.inRecovery && s.current>0) {
+    s={...s,inRecovery:true,baseStreak:s.current}; // enter recovery
+  }
+  let goalJustMet=false, recoveryJustDone=false;
+  const MILESTONES=[3,7,14,30,100];
+  let newMilestone=null;
+  if (!s.inRecovery && todayCount===DAILY_GOAL && s.lastGoalDate!==today) {
+    const consecutive=s.lastGoalDate===yesterday;
+    const newCurrent=consecutive?s.current+1:1;
+    s={...s,current:newCurrent,longest:Math.max(newCurrent,s.longest),lastGoalDate:today,inRecovery:false};
+    goalJustMet=true;
+    if (MILESTONES.includes(newCurrent)) newMilestone=newCurrent;
+  } else if (s.inRecovery && todayCount===RECOVERY_GOAL && s.lastGoalDate!==today) {
+    const newCurrent=s.baseStreak+1;
+    s={...s,current:newCurrent,longest:Math.max(newCurrent,s.longest),lastGoalDate:today,inRecovery:false,recoveries:s.recoveries+1};
+    recoveryJustDone=true;
+    if (MILESTONES.includes(newCurrent)) newMilestone=newCurrent;
+  }
+  saveStreak(s);
+  return {streakData:s,goalJustMet,recoveryJustDone,newMilestone};
+}
+
+// Achievement helpers
+function loadAchievements() {
+  try { return JSON.parse(localStorage.getItem(ACHIEVE_KEY)||'null')||{}; }
+  catch { return {}; }
+}
+function saveAchievements(a) { localStorage.setItem(ACHIEVE_KEY, JSON.stringify(a)); }
+function computeAchieveValues(cards,history,streakData,sessionCards) {
+  const totalReviewed=Object.values(history).reduce((s,d)=>s+(d.reviewed||0),0);
+  const financeMastered=cards.filter(c=>FINANCE_FRONTS.has(c.front.toLowerCase())&&c.repetitions>=3).length;
+  const stage2=cards.filter(c=>c.stage===2).length;
+  const level=getLevelIdx(loadXP())+1;
+  return {
+    cards_reviewed: totalReviewed,
+    streak: streakData.current,
+    finance: financeMastered,
+    session: sessionCards,
+    created: cards.length,
+    stage2,
+    recovery: streakData.recoveries||0,
+    level,
+  };
+}
+// Returns array of newly unlocked tier indices per achievement id, e.g. {cards_reviewed:1}
+function checkNewAchievements(values, prevAchievements) {
+  const newUnlocks={};
+  ACHIEVEMENTS_DEF.forEach(a=>{
+    const val=values[a.id]||0;
+    const prevTier=prevAchievements[a.id]||0;
+    let newTier=prevTier;
+    a.tiers.forEach((t,i)=>{ if(val>=t.goal && i+1>newTier) newTier=i+1; });
+    if(newTier>prevTier) newUnlocks[a.id]=newTier;
+  });
+  return newUnlocks;
+}
+function totalAchievements(achievements) {
+  return Object.values(achievements).reduce((s,v)=>s+v,0);
+}
+function maxAchievements() { return ACHIEVEMENTS_DEF.length*3; }
+
+// Course countdown
+function getCourseCountdown() {
+  const now=new Date();
+  const diff=COURSE_DATE-now;
+  if(diff<=0) return {days:0,done:true,pct:100};
+  const days=Math.ceil(diff/86400000);
+  const firstStr=localStorage.getItem(FIRST_KEY);
+  if(!firstStr) localStorage.setItem(FIRST_KEY, now.toISOString().slice(0,10));
+  const first=new Date(localStorage.getItem(FIRST_KEY)||now.toISOString().slice(0,10));
+  const total=COURSE_DATE-first;
+  const elapsed=now-first;
+  const pct=Math.min(100,Math.round(elapsed/total*100));
+  return {days,done:false,pct};
+}
+
+// Audio pronunciation
+function speak(text) {
+  if(!window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  const utter=new SpeechSynthesisUtterance(text.split(' — ')[0].split(' — ')[0].split('—')[0].trim());
+  utter.lang='en-US'; utter.rate=0.9;
+  window.speechSynthesis.speak(utter);
 }
 
 // ── Auth view ─────────────────────────────────────────────────────────────────
@@ -472,6 +620,82 @@ function HomeView({ cards, setView, direction, setDirection }) {
         <StatCard label="🔍 Tunnistus (V1)" value={stage1} hint="EN→FI · kääntäminen" />
         <StatCard label="✍️ Tuotto (V2)"    value={stage2} hint="FI→EN · kirjoittaminen" />
       </div>
+      {/* Streak progress */}
+      {(() => {
+        const s = loadStreak();
+        const todayH = loadHistory();
+        const todayCount = todayH[dateStr(0)]?.reviewed || 0;
+        const goal = s.inRecovery ? RECOVERY_GOAL : DAILY_GOAL;
+        const pct = Math.min(100, Math.round(todayCount/goal*100));
+        return (
+          <div className="mb-4 bg-gray-800 rounded-xl p-4">
+            {s.inRecovery ? (
+              <div className="text-orange-400 text-sm font-medium mb-2">
+                😰 Eilen jäi välistä — opiskele {RECOVERY_GOAL} korttia pelastaaksesi putken!
+              </div>
+            ) : s.current > 0 && [3,7,14,30,100].includes(s.current) ? (
+              <div className="text-amber-400 text-sm font-medium mb-2">🔥 {s.current} päivän putki! Loistava!</div>
+            ) : null}
+            <div className="flex justify-between text-xs text-gray-400 mb-1">
+              <span>{s.inRecovery ? `🆘 Putken pelastus: ${todayCount}/${goal}` : `Tänään: ${todayCount}/${goal} korttia`}</span>
+              <span>🔥 {s.current} pv</span>
+            </div>
+            <div className="w-full bg-gray-700 rounded-full h-2.5">
+              <div className={`h-2.5 rounded-full transition-all ${s.inRecovery?'bg-orange-500':pct>=100?'bg-green-500':'bg-amber-500'}`}
+                style={{width:`${pct}%`}} />
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* XP / Level bar */}
+      {(() => {
+        const xp = loadXP();
+        const prog = getXpProgress(xp);
+        const pct = Math.round(prog.xpInLevel/prog.xpNeeded*100);
+        return (
+          <div className="mb-4 bg-gray-800 rounded-xl p-4">
+            <div className="flex justify-between text-xs text-gray-400 mb-1">
+              <span>⭐ Taso {prog.level} — {prog.name}</span>
+              <span>{prog.xpInLevel}/{prog.xpNeeded} XP</span>
+            </div>
+            <div className="w-full bg-gray-700 rounded-full h-2.5">
+              <div className="h-2.5 rounded-full bg-purple-500 transition-all" style={{width:`${pct}%`}} />
+            </div>
+            {prog.nextName && <div className="text-gray-600 text-xs mt-1">Seuraava: {prog.nextName}</div>}
+          </div>
+        );
+      })()}
+
+      {/* Countdown */}
+      {(() => {
+        const {days, done, pct} = getCourseCountdown();
+        const isRed = days < 7;
+        const isAmber = days < 30 && !isRed;
+        return (
+          <div className={`mb-6 rounded-xl p-4 border ${isRed?'border-red-500/40 bg-red-900/20':isAmber?'border-amber-500/40 bg-amber-900/10':'border-gray-700 bg-gray-800'}`}>
+            {done ? (
+              <p className="text-amber-400 font-medium">🎓 Kurssi on alkanut — olet valmis!</p>
+            ) : (
+              <>
+                <div className="flex justify-between items-center mb-2">
+                  <span className={`text-sm font-medium ${isRed?'text-red-400':isAmber?'text-amber-400':'text-gray-300'}`}>
+                    ⏳ Rahoituksen kurssi alkaa {days} päivän kuluttua
+                    {isRed && ' — Viimeinen viikko, anna kaikkesi! 💪'}
+                  </span>
+                  <span className="text-gray-500 text-xs">{pct}%</span>
+                </div>
+                <div className="w-full bg-gray-700 rounded-full h-2">
+                  <div className={`h-2 rounded-full transition-all ${isRed?'bg-red-500':isAmber?'bg-amber-500':'bg-blue-500'}`}
+                    style={{width:`${pct}%`}} />
+                </div>
+                <div className="text-gray-600 text-xs mt-1">Matka B1 → B2</div>
+              </>
+            )}
+          </div>
+        );
+      })()}
+
       {due > 0 ? (
         <button onClick={() => setView('study')}
           className="w-full py-4 bg-amber-500 hover:bg-amber-400 text-gray-900 font-bold text-lg rounded-xl transition-colors">
@@ -496,6 +720,68 @@ function StatCard({ label, value, accent, hint }) {
   );
 }
 
+// ── Session Summary ───────────────────────────────────────────────────────────
+
+function SessionSummaryView({ sessionCards, sessionXP, history, streakData, onDone }) {
+  const todayKey = dateStr(0);
+  const todayCount = history[todayKey]?.reviewed || 0;
+  const xp = loadXP();
+  const prog = getXpProgress(xp);
+  const inRecovery = streakData.inRecovery;
+  const goal = inRecovery ? RECOVERY_GOAL : DAILY_GOAL;
+  const pct = Math.min(100, Math.round(todayCount / goal * 100));
+
+  const msgs = ['Hienoa työtä! 💪','Jatka samaan malliin! 🚀','Olet oppimiskoneessa! 🔥','Loistava suoritus! ⭐','Edistyt hienosti! 📈'];
+  const msg = msgs[Math.floor(Math.random()*msgs.length)];
+
+  return (
+    <div className="max-w-3xl mx-auto px-4 py-12">
+      <div className="bg-gray-800 rounded-2xl p-8 border border-gray-700 text-center space-y-6">
+        <div className="text-5xl mb-2">🎉</div>
+        <h2 className="text-2xl font-bold text-amber-400">Sessio valmis!</h2>
+        <p className="text-gray-400">{msg}</p>
+        <div className="grid grid-cols-3 gap-4 my-4">
+          <div className="bg-gray-900 rounded-xl p-4">
+            <div className="text-2xl font-bold text-white">{sessionCards}</div>
+            <div className="text-gray-500 text-xs mt-1">Korttia kerrattu</div>
+          </div>
+          <div className="bg-gray-900 rounded-xl p-4">
+            <div className="text-2xl font-bold text-amber-400">+{sessionXP}</div>
+            <div className="text-gray-500 text-xs mt-1">XP ansaittu</div>
+          </div>
+          <div className="bg-gray-900 rounded-xl p-4">
+            <div className="text-2xl font-bold text-orange-400">🔥 {streakData.current}</div>
+            <div className="text-gray-500 text-xs mt-1">Päivän putki</div>
+          </div>
+        </div>
+        <div>
+          <div className="flex justify-between text-xs text-gray-400 mb-1">
+            <span>{inRecovery ? '🆘 Putken pelastus' : 'Tänään'}: {todayCount}/{goal}</span>
+            <span>{pct}%</span>
+          </div>
+          <div className="w-full bg-gray-700 rounded-full h-3">
+            <div className={`h-3 rounded-full transition-all ${inRecovery?'bg-orange-500':pct>=100?'bg-green-500':'bg-amber-500'}`}
+              style={{width:`${pct}%`}} />
+          </div>
+        </div>
+        <div>
+          <div className="flex justify-between text-xs text-gray-400 mb-1">
+            <span>{prog.name} — Taso {prog.level}</span>
+            <span>{prog.xpInLevel}/{prog.xpNeeded} XP</span>
+          </div>
+          <div className="w-full bg-gray-700 rounded-full h-2">
+            <div className="h-2 rounded-full bg-purple-500 transition-all"
+              style={{width:`${Math.round(prog.xpInLevel/prog.xpNeeded*100)}%`}} />
+          </div>
+        </div>
+        <button onClick={onDone} className="w-full py-3 bg-amber-500 hover:bg-amber-400 text-gray-900 font-bold rounded-xl transition-colors text-lg">
+          Jatka →
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Study ─────────────────────────────────────────────────────────────────────
 
 function RatingButtons({ onRate }) {
@@ -516,19 +802,23 @@ function RatingButtons({ onRate }) {
   );
 }
 
-function StudyView({ cards, setCards, direction, setDirection }) {
-  const [queue]                     = useState(() => cards.filter(isDue));
-  const [idx,         setIdx]       = useState(0);
-  const [phase,       setPhase]     = useState('question');
-  const [typed,       setTyped]     = useState('');
-  const [correct,     setCorrect]   = useState(null);
-  const [hintShown,   setHintShown] = useState(false);
-  const [done,        setDone]      = useState(false);
-  const [graduated,   setGraduated] = useState(false);
+function StudyView({ cards, setCards, direction, setDirection, onDone }) {
+  const [queue]                         = useState(() => cards.filter(isDue));
+  const [idx,           setIdx]         = useState(0);
+  const [phase,         setPhase]       = useState('question');
+  const [typed,         setTyped]       = useState('');
+  const [correct,       setCorrect]     = useState(null);
+  const [hintShown,     setHintShown]   = useState(false);
+  const [graduated,     setGraduated]   = useState(false);
+  const [sessionXP,     setSessionXP]   = useState(0);
+  const [sessionCards,  setSessionCards]= useState(0);
+  const [levelUp,       setLevelUp]     = useState(null);
+  const [streakToast,   setStreakToast] = useState(null);
+  const [showSummary,   setShowSummary] = useState(false);
   const inputRef = useRef(null);
 
   const card        = queue[idx];
-  const effectiveDir = getCardDirection(card, direction);
+  const effectiveDir = card ? getCardDirection(card, direction) : 'en-fi';
   const isFiEn      = effectiveDir === 'fi-en';
 
   useEffect(() => {
@@ -557,12 +847,14 @@ function StudyView({ cards, setCards, direction, setDirection }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [isFiEn, phase]);
 
-  if (queue.length === 0 || done) return (
-    <div className="max-w-3xl mx-auto px-4 py-16 text-center">
-      <div className="text-5xl mb-4">🎉</div>
-      <h2 className="text-2xl font-bold text-amber-400 mb-2">Kaikki kertailtu!</h2>
-      <p className="text-gray-400">Ei enempää erääntyneitä kortteja.</p>
-    </div>
+  if (showSummary || queue.length === 0) return (
+    <SessionSummaryView
+      sessionCards={sessionCards}
+      sessionXP={sessionXP}
+      history={loadHistory()}
+      streakData={loadStreak()}
+      onDone={onDone}
+    />
   );
 
   const promptText   = isFiEn ? card.back  : card.front;
@@ -572,7 +864,7 @@ function StudyView({ cards, setCards, direction, setDirection }) {
   const cardStage    = card.stage || 1;
 
   function advance() {
-    if (idx + 1 >= queue.length) setDone(true);
+    if (idx + 1 >= queue.length) setShowSummary(true);
     else {
       setIdx(i => i + 1); setPhase('question');
       setTyped(''); setCorrect(null); setHintShown(false);
@@ -581,8 +873,8 @@ function StudyView({ cards, setCards, direction, setDirection }) {
 
   function rate(quality) {
     recordStudy(quality >= 3);
+    dbRecordStudy(quality >= 3);
     let updated = sm2(card, quality);
-    // Preserve / set stage, check graduation
     updated = { ...updated, stage: cardStage };
     if (cardStage === 1 && updated.repetitions >= 3) {
       updated = { ...updated, stage: 2 };
@@ -592,6 +884,35 @@ function StudyView({ cards, setCards, direction, setDirection }) {
     const newCards = cards.map(c => c.id === updated.id ? updated : c);
     setCards(newCards); saveCards(newCards);
     dbSaveCard(updated);
+
+    // XP
+    const xpEarned = XP_BY_Q[quality] || 1;
+    const prevXP = loadXP();
+    const newXP = prevXP + xpEarned;
+    const prevLvl = getLevelIdx(prevXP);
+    const newLvl = getLevelIdx(newXP);
+    saveXP(newXP);
+    if (newLvl > prevLvl) setLevelUp(LEVELS[newLvl].name);
+    setSessionXP(x => x + xpEarned);
+    setSessionCards(n => n + 1);
+
+    // Streak (update after recordStudy updates today's count)
+    const todayHistory = loadHistory();
+    const todayCount = todayHistory[dateStr(0)]?.reviewed || 0;
+    const {goalJustMet, recoveryJustDone, newMilestone} = updateStreak(todayCount);
+    if (goalJustMet) setStreakToast('🔥 Päivän tavoite saavutettu!');
+    if (recoveryJustDone) setStreakToast('💪 Putki pelastettu!');
+    if (newMilestone) setStreakToast(`🔥 ${newMilestone} päivän putki!`);
+    if (goalJustMet || recoveryJustDone) setTimeout(() => setStreakToast(null), 3500);
+
+    // Check achievements
+    const achVals = computeAchieveValues(newCards, loadHistory(), loadStreak(), sessionCards+1);
+    const prevAch = loadAchievements();
+    const newUnlocks = checkNewAchievements(achVals, prevAch);
+    if (Object.keys(newUnlocks).length > 0) {
+      saveAchievements({...prevAch, ...newUnlocks});
+    }
+
     advance();
   }
 
@@ -612,6 +933,8 @@ function StudyView({ cards, setCards, direction, setDirection }) {
           🎉 Sana siirtyy tuottovaiheeseen!
         </div>
       )}
+      {levelUp && <div className="mb-4 bg-purple-500/15 border border-purple-400/40 rounded-xl px-4 py-3 text-center text-purple-300 font-medium">⬆️ Uusi taso: {levelUp}!</div>}
+      {streakToast && <div className="mb-4 bg-amber-500/15 border border-amber-400/40 rounded-xl px-4 py-3 text-center text-amber-300 font-medium">{streakToast}</div>}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
           <span className="text-gray-400 text-sm">Kortti {idx + 1} / {queue.length}</span>
@@ -632,6 +955,7 @@ function StudyView({ cards, setCards, direction, setDirection }) {
         <>
           <div className="bg-gray-800 rounded-2xl p-8 mb-6 border border-gray-700 min-h-[150px] flex flex-col items-center justify-center gap-3">
             <p className="text-xl text-amber-200 text-center leading-relaxed">{parsedPrompt.main}</p>
+            <button onClick={() => speak(answerText)} className="text-gray-500 hover:text-amber-400 text-xl transition-colors" title="Kuuntele">🔊</button>
             {parsedPrompt.hint && (hintShown
               ? <p className="text-gray-400 text-sm text-center italic">{parsedPrompt.hint}</p>
               : <button onClick={() => setHintShown(true)}
@@ -669,6 +993,9 @@ function StudyView({ cards, setCards, direction, setDirection }) {
                   </div>
                 </div>
               )}
+              {card.example && (
+                <p className="text-gray-500 text-xs italic mt-2 text-center">„{card.example}"</p>
+              )}
               <RatingButtons onRate={rate} />
             </div>
           )}
@@ -680,6 +1007,7 @@ function StudyView({ cards, setCards, direction, setDirection }) {
               <div className="flip-front absolute inset-0 bg-gray-800 rounded-2xl flex flex-col items-center justify-center p-8 cursor-pointer border border-gray-700 hover:border-amber-500/50 transition-colors"
                 onClick={() => setPhase('answered')}>
                 <p className="text-2xl font-semibold text-white text-center">{parsedPrompt.main}</p>
+                <button onClick={e=>{e.stopPropagation();speak(promptText);}} className="text-gray-500 hover:text-amber-400 text-xl transition-colors mt-2" title="Kuuntele">🔊</button>
                 {phase === 'question' && <p className="text-gray-500 text-sm mt-4">Klikkaa tai paina Enter kääntääksesi</p>}
               </div>
               <div className="flip-back absolute inset-0 bg-gray-800 rounded-2xl flex flex-col items-center justify-center gap-3 p-8 border border-amber-500/30 cursor-pointer hover:border-amber-400/50 transition-colors"
@@ -691,6 +1019,9 @@ function StudyView({ cards, setCards, direction, setDirection }) {
                       className="text-gray-500 text-xs border border-gray-700 hover:border-amber-500/50 hover:text-amber-400 rounded-lg px-3 py-1.5 transition-colors">
                       💡 Näytä vinkki
                     </button>
+                )}
+                {card.example && phase==='answered' && (
+                  <p className="text-gray-500 text-xs italic mt-2 text-center">„{card.example}"</p>
                 )}
                 <p className="text-gray-600 text-xs mt-1">↩ klikkaa tai Enter palataksesi</p>
               </div>
@@ -714,27 +1045,28 @@ function StudyView({ cards, setCards, direction, setDirection }) {
 // ── Add / Edit ────────────────────────────────────────────────────────────────
 
 function AddCardView({ cards, setCards, editCard, setEditCard }) {
-  const [front, setFront] = useState(editCard ? editCard.front : '');
-  const [back,  setBack]  = useState(editCard ? editCard.back  : '');
-  const [saved, setSaved] = useState(false);
+  const [front,   setFront]   = useState(editCard ? editCard.front   : '');
+  const [back,    setBack]    = useState(editCard ? editCard.back    : '');
+  const [example, setExample] = useState(editCard?.example || '');
+  const [saved,   setSaved]   = useState(false);
 
   function handleSubmit(e) {
     e.preventDefault();
     if (!front.trim() || !back.trim()) return;
     let updated, cardToSync;
     if (editCard) {
-      const edited = { ...editCard, front: front.trim(), back: back.trim() };
+      const edited = { ...editCard, front: front.trim(), back: back.trim(), example: example.trim() || null };
       updated = cards.map(c => c.id === editCard.id ? edited : c);
       cardToSync = edited;
       setEditCard(null);
     } else {
-      const card = newCard(front.trim(), back.trim());
+      const card = newCard(front.trim(), back.trim(), example.trim() || null);
       updated = [...cards, card];
       cardToSync = card;
     }
     setCards(updated); saveCards(updated);
     dbSaveCard(cardToSync);
-    setFront(''); setBack('');
+    setFront(''); setBack(''); setExample('');
     setSaved(true); setTimeout(() => setSaved(false), 2000);
   }
 
@@ -755,6 +1087,12 @@ function AddCardView({ cards, setCards, editCard, setEditCard }) {
           <textarea value={back} onChange={e => setBack(e.target.value)} rows={3}
             className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-amber-500 resize-none"
             placeholder="Vastaus tai käännös" />
+        </div>
+        <div>
+          <label className="block text-gray-400 text-sm mb-1">Esimerkkilause <span className="text-gray-600">(valinnainen)</span></label>
+          <input value={example} onChange={e => setExample(e.target.value)}
+            className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-amber-500"
+            placeholder="Esim. She sold her portfolio before the crash." />
         </div>
         <div className="flex gap-3">
           <button type="submit"
@@ -857,6 +1195,7 @@ function ManageView({ cards, setCards, setEditCard, setView }) {
               <div className="flex-1 min-w-0">
                 <p className="text-white font-medium truncate">{card.front}</p>
                 <p className="text-gray-400 text-sm truncate">{card.back}</p>
+                {card.example && <p className="text-gray-600 text-xs truncate italic">{card.example}</p>}
               </div>
               <span className={`text-xs font-medium ${cls} shrink-0`}>{label}</span>
               <button onClick={() => { setEditCard(card); setView('add'); }}
@@ -924,10 +1263,12 @@ function StatsView({ cards }) {
   const newCards = cards.filter(c => c.repetitions === 0).length;
   const due      = cards.filter(isDue).length;
   const avgEF    = total > 0 ? (cards.reduce((s, c) => s + c.easeFactor, 0) / total).toFixed(2) : '–';
-  const streak   = getStreak(history);
-  const todayKey = new Date().toISOString().slice(0, 10);
+  const streakData = loadStreak();
+  const streak   = streakData.current;
+  const todayKey = dateStr(0);
   const today    = history[todayKey] || { reviewed: 0, correct: 0 };
   const todayPct = today.reviewed > 0 ? Math.round(today.correct / today.reviewed * 100) + '%' : '–';
+  const allTimeReviewed = Object.values(history).reduce((s,d)=>s+(d.reviewed||0),0);
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-8">
@@ -942,6 +1283,8 @@ function StatsView({ cards }) {
           <div className="text-3xl font-bold text-white">{avgEF}</div>
           <div className="text-gray-400 text-sm mt-1">Keskim. helppouskerroin</div>
         </div>
+        <StatCard label="Kaikki aikojen" value={allTimeReviewed} />
+        <StatCard label="Pisin putki" value={streakData.longest} />
       </div>
       <div className="grid grid-cols-3 gap-4 mb-4">
         <div className="bg-gray-800 rounded-xl p-5">
@@ -975,6 +1318,55 @@ function StatsView({ cards }) {
       <div className="bg-gray-800 rounded-xl p-5">
         <p className="text-gray-400 text-sm mb-4">Aktiivisuus — viimeiset 30 päivää</p>
         <Heatmap history={history} />
+      </div>
+      <div className="mt-6 bg-gray-800 rounded-xl p-5">
+        <div className="flex justify-between items-center mb-4">
+          <p className="text-gray-300 font-medium">Saavutukset</p>
+          <span className="text-gray-500 text-sm">
+            {totalAchievements(loadAchievements())}/{maxAchievements()}
+          </span>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          {ACHIEVEMENTS_DEF.map(a => {
+            const achievements = loadAchievements();
+            const unlockedTiers = achievements[a.id] || 0;
+            const values = computeAchieveValues(cards, history, streakData, 0);
+            const val = values[a.id] || 0;
+            return (
+              <div key={a.id} className="bg-gray-900 rounded-xl p-3">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-xl">{a.icon}</span>
+                  <span className="text-white text-sm font-medium">{a.name}</span>
+                </div>
+                <div className="flex gap-1.5">
+                  {a.tiers.map((t,i) => {
+                    const unlocked = i < unlockedTiers;
+                    const pct = Math.min(100, Math.round(val/t.goal*100));
+                    return (
+                      <div key={i} className="flex-1">
+                        <div className={`rounded-lg p-2 border text-center text-xs ${unlocked?'border-0':'border-gray-700 opacity-50'}`}
+                          style={unlocked?{borderColor:TIER_COLORS[i],backgroundColor:TIER_COLORS[i]+'22'}:{}}
+                          title={`${t.lbl}: ${unlocked?'✓ Saavutettu':`${val}/${t.goal}`}`}>
+                          <div style={unlocked?{color:TIER_COLORS[i]}:{}} className="font-bold text-base">
+                            {unlocked?'✓':'🔒'}
+                          </div>
+                          <div className="text-gray-500 mt-0.5" style={unlocked?{color:TIER_COLORS[i]+'cc'}:{}}>
+                            {['B','S','G'][i]}
+                          </div>
+                        </div>
+                        {!unlocked && (
+                          <div className="w-full bg-gray-700 rounded-full h-1 mt-1">
+                            <div className="h-1 rounded-full bg-amber-500/60" style={{width:`${pct}%`}} />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
@@ -1249,7 +1641,7 @@ function App() {
       if (dbCards === null) {
         // Network error — fall back to localStorage
         const local = loadCards();
-        const fallback = local || PRELOADED.map(p => newCard(p.front, p.back));
+        const fallback = local || PRELOADED.map(p => newCard(p.front, p.back, p.example));
         setCards(fallback); saveCards(fallback);
         setSyncError('DB-virhe: ' + errorMsg);
         return;
@@ -1259,7 +1651,7 @@ function App() {
         const local = loadCards();
         const toUpload = (local && local.length > 0)
           ? local
-          : PRELOADED.map(p => newCard(p.front, p.back));
+          : PRELOADED.map(p => newCard(p.front, p.back, p.example));
         await Promise.all(toUpload.map(c => dbSaveCard(c)));
         setCards(toUpload); saveCards(toUpload);
       } else {
@@ -1303,7 +1695,7 @@ function App() {
       )}
       <main>
         {view === 'home'    && <HomeView cards={cards} setView={setView} direction={direction} setDirection={setDirection} />}
-        {view === 'study'   && <StudyView cards={cards} setCards={setCards} direction={direction} setDirection={setDirection} />}
+        {view === 'study'   && <StudyView cards={cards} setCards={setCards} direction={direction} setDirection={setDirection} onDone={() => setView('home')} />}
         {view === 'add'     && <AddCardView cards={cards} setCards={setCards} editCard={editCard} setEditCard={setEditCard} />}
         {view === 'import'  && <ImportView cards={cards} setCards={setCards} />}
         {view === 'manage'  && <ManageView cards={cards} setCards={setCards} setEditCard={setEditCard} setView={setView} />}
