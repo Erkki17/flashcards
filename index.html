@@ -160,7 +160,7 @@ const DEFAULT_DECKS = [
 const DAILY_GOAL  = 50;
 const RECOVERY_GOAL = 100;
 const COURSE_DATE = new Date('2026-09-01');
-const XP_BY_Q = { 0: 1, 1: 2, 3: 3 };
+const XP_BY_Q = { 1: 1, 2: 2, 4: 3 };
 const LEVELS = [
   { min:0,    name:'Aloittelija'    },
   { min:100,  name:'Harjoittelija' },
@@ -872,14 +872,15 @@ function RatingButtons({ onRate }) {
   return (
     <div className="grid grid-cols-3 gap-3">
       {[
-        { label: 'Vaikea',    q: 1, color: 'bg-red-600 hover:bg-red-500',       key: '←' },
-        { label: 'Uudestaan', q: 0, color: 'bg-orange-600 hover:bg-orange-500', key: '↓' },
-        { label: 'Oikein',    q: 3, color: 'bg-green-600 hover:bg-green-500',   key: '→' },
-      ].map(({ label, q, color, key }) => (
+        { label: 'Vaikea',    sub: 'pian uudelleen',   q: 1, color: 'bg-red-700 hover:bg-red-600',    key: '←' },
+        { label: 'Uudestaan', sub: 'hetken kuluttua',  q: 2, color: 'bg-orange-600 hover:bg-orange-500', key: '↓' },
+        { label: 'Oikein',    sub: 'huomiselle',       q: 4, color: 'bg-green-600 hover:bg-green-500', key: '→' },
+      ].map(({ label, sub, q, color, key }) => (
         <button key={q} onClick={() => onRate(q)}
-          className={`py-2.5 ${color} text-white font-semibold rounded-xl transition-colors flex flex-col items-center gap-0.5`}>
+          className={`py-2.5 px-2 ${color} text-white font-semibold rounded-xl transition-colors flex flex-col items-center gap-0.5`}>
           <span>{label}</span>
-          <span className="text-xs opacity-50 font-normal">{key}</span>
+          <span className="text-xs opacity-50 font-normal">{sub}</span>
+          <span className="text-xs opacity-30 font-normal">{key}</span>
         </button>
       ))}
     </div>
@@ -887,37 +888,60 @@ function RatingButtons({ onRate }) {
 }
 
 function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck, studyMode, decks }) {
-  const [queue]                         = useState(() => {
+  // Live mutable queue — cards are removed (Oikein) or re-inserted (Vaikea/Uudestaan)
+  const [liveQueue,    setLiveQueue]    = useState(() => {
     if (studyMode === 'smart') return smartSort(cards.filter(isDue));
     return cards.filter(c => isDue(c) && (studyDeck == null || c.deck === studyDeck));
   });
-  const [idx,           setIdx]         = useState(0);
-  const [phase,         setPhase]       = useState('question');
-  const [typed,         setTyped]       = useState('');
-  const [correct,       setCorrect]     = useState(null);
-  const [hintShown,     setHintShown]   = useState(false);
-  const [graduated,     setGraduated]   = useState(false);
-  const [sessionXP,     setSessionXP]   = useState(0);
-  const [sessionCards,  setSessionCards]= useState(0);
-  const [levelUp,       setLevelUp]     = useState(null);
-  const [streakToast,   setStreakToast] = useState(null);
-  const [showSummary,   setShowSummary] = useState(false);
+  const [doneIds,      setDoneIds]      = useState(() => new Set());
+  const [phase,        setPhase]        = useState('question');
+  const [typed,        setTyped]        = useState('');
+  const [correct,      setCorrect]      = useState(null);
+  const [hintShown,    setHintShown]    = useState(false);
+  const [graduated,    setGraduated]    = useState(false);
+  const [sessionXP,    setSessionXP]    = useState(0);
+  const [sessionCards, setSessionCards] = useState(0);
+  const [levelUp,      setLevelUp]      = useState(null);
+  const [streakToast,  setStreakToast]  = useState(null);
+  const [feedbackMsg,  setFeedbackMsg]  = useState(null);
+  const [showQuit,     setShowQuit]     = useState(false);
   const inputRef = useRef(null);
+  // Ref so keyboard handler always uses the latest rate() closure
+  const rateRef = useRef(null);
 
-  const card        = queue[idx];
+  // Always operate on the head of the queue
+  const card        = liveQueue[0];
   const effectiveDir = card ? getCardDirection(card, direction) : 'en-fi';
   const isFiEn      = effectiveDir === 'fi-en';
 
+  // Progress tracking
+  const uniqueInLive = new Set(liveQueue.map(c => c.id)).size;
+  const totalUnique  = doneIds.size + uniqueInLive;
+  const progressPct  = totalUnique > 0 ? Math.round(doneIds.size / totalUnique * 100) : 0;
+
+  // Pull unseen cards as buffer when fewer than 5 unique cards remain in queue
+  function fillBuffer(queue, done) {
+    const ids = new Set(queue.map(c => c.id));
+    if (ids.size >= 5) return queue;
+    const eligible = cards.filter(c =>
+      (studyDeck == null || c.deck === studyDeck) &&
+      !done.has(c.id) && !ids.has(c.id)
+    );
+    if (eligible.length === 0) return queue;
+    return [...queue, ...eligible.slice(0, 5 - ids.size)];
+  }
+
   useEffect(() => {
     setPhase('question'); setTyped(''); setCorrect(null); setHintShown(false);
-  }, [idx, direction]);
+  }, [card?.id, direction]);
 
   useEffect(() => {
     if (isFiEn && phase === 'question') inputRef.current?.focus();
-  }, [idx, phase, isFiEn]);
+  }, [card?.id, phase, isFiEn]);
 
   useEffect(() => {
     function onKey(e) {
+      if (showQuit) return;
       const tag = document.activeElement?.tagName;
       const inInput = tag === 'BUTTON' || tag === 'INPUT' || tag === 'TEXTAREA';
       if (e.key === 'Enter' && !isFiEn && !inInput) {
@@ -925,16 +949,17 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
         return;
       }
       if (phase === 'answered') {
-        if      (e.key === 'ArrowLeft')  { e.preventDefault(); rate(1); }
-        else if (e.key === 'ArrowDown')  { e.preventDefault(); rate(0); }
-        else if (e.key === 'ArrowRight') { e.preventDefault(); rate(3); }
+        if      (e.key === 'ArrowLeft')  { e.preventDefault(); rateRef.current(1); }
+        else if (e.key === 'ArrowDown')  { e.preventDefault(); rateRef.current(2); }
+        else if (e.key === 'ArrowRight') { e.preventDefault(); rateRef.current(4); }
       }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [isFiEn, phase]);
+  }, [isFiEn, phase, showQuit]);
 
-  if (showSummary || queue.length === 0) return (
+  // Session complete when live queue is empty
+  if (liveQueue.length === 0) return (
     <SessionSummaryView
       sessionCards={sessionCards}
       sessionXP={sessionXP}
@@ -944,23 +969,19 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
     />
   );
 
+  if (!card) return null;
+
   const promptText   = isFiEn ? card.back  : card.front;
   const answerText   = isFiEn ? card.front : card.back;
   const parsedPrompt = parseBack(promptText);
   const parsedAnswer = parseBack(answerText);
   const cardStage    = card.stage || 1;
 
-  function advance() {
-    if (idx + 1 >= queue.length) setShowSummary(true);
-    else {
-      setIdx(i => i + 1); setPhase('question');
-      setTyped(''); setCorrect(null); setHintShown(false);
-    }
-  }
-
   function rate(quality) {
-    recordStudy(quality >= 3);
-    dbRecordStudy(quality >= 3);
+    const isCorrect = quality >= 4;
+    recordStudy(isCorrect);
+    dbRecordStudy(isCorrect);
+
     let updated = sm2(card, quality);
     updated = { ...updated, stage: cardStage };
     if (cardStage === 1 && updated.repetitions >= 3) {
@@ -975,33 +996,59 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
     // XP
     const xpEarned = XP_BY_Q[quality] || 1;
     const prevXP = loadXP();
-    const newXP = prevXP + xpEarned;
+    const newXP  = prevXP + xpEarned;
     const prevLvl = getLevelIdx(prevXP);
-    const newLvl = getLevelIdx(newXP);
+    const newLvl  = getLevelIdx(newXP);
     saveXP(newXP);
     if (newLvl > prevLvl) setLevelUp(LEVELS[newLvl].name);
     setSessionXP(x => x + xpEarned);
     setSessionCards(n => n + 1);
 
-    // Streak (update after recordStudy updates today's count)
+    // Streak
     const todayHistory = loadHistory();
     const todayCount = todayHistory[dateStr(0)]?.reviewed || 0;
-    const {goalJustMet, recoveryJustDone, newMilestone} = updateStreak(todayCount);
-    if (goalJustMet) setStreakToast('🔥 Päivän tavoite saavutettu!');
+    const { goalJustMet, recoveryJustDone, newMilestone } = updateStreak(todayCount);
+    if (goalJustMet)      setStreakToast('🔥 Päivän tavoite saavutettu!');
     if (recoveryJustDone) setStreakToast('💪 Putki pelastettu!');
-    if (newMilestone) setStreakToast(`🔥 ${newMilestone} päivän putki!`);
-    if (goalJustMet || recoveryJustDone) setTimeout(() => setStreakToast(null), 3500);
+    if (newMilestone)     setStreakToast(`🔥 ${newMilestone} päivän putki!`);
+    if (goalJustMet || recoveryJustDone || newMilestone) setTimeout(() => setStreakToast(null), 3500);
 
-    // Check achievements
-    const achVals = computeAchieveValues(newCards, loadHistory(), loadStreak(), sessionCards+1);
+    // Achievements
+    const achVals = computeAchieveValues(newCards, loadHistory(), loadStreak(), sessionCards + 1);
     const prevAch = loadAchievements();
     const newUnlocks = checkNewAchievements(achVals, prevAch);
-    if (Object.keys(newUnlocks).length > 0) {
-      saveAchievements({...prevAch, ...newUnlocks});
-    }
+    if (Object.keys(newUnlocks).length > 0) saveAchievements({ ...prevAch, ...newUnlocks });
 
-    advance();
+    if (isCorrect) {
+      // Remove card from queue; mark done
+      const newDone = new Set([...doneIds, card.id]);
+      const newQueue = fillBuffer(liveQueue.slice(1), newDone);
+      setDoneIds(newDone);
+      setLiveQueue(newQueue);
+      setFeedbackMsg(null);
+    } else {
+      // Re-insert card further ahead in queue
+      const offset = quality === 1
+        ? Math.floor(Math.random() * 6) + 5    // Vaikea:    5–10 positions
+        : Math.floor(Math.random() * 11) + 10; // Uudestaan: 10–20 positions
+      const msg = quality === 1
+        ? '🔄 Tulee pian uudelleen'
+        : '🔄 Tulee hetken kuluttua uudelleen';
+      setFeedbackMsg(msg);
+      setTimeout(() => setFeedbackMsg(null), 2500);
+      const rest = liveQueue.slice(1);
+      const insertAt = Math.min(offset, rest.length);
+      const newQueue = fillBuffer(
+        [...rest.slice(0, insertAt), card, ...rest.slice(insertAt)],
+        doneIds
+      );
+      setLiveQueue(newQueue);
+    }
+    setPhase('question'); setTyped(''); setCorrect(null); setHintShown(false);
   }
+
+  // Keep rateRef current so keyboard handler always uses fresh closure
+  rateRef.current = rate;
 
   function checkAnswer(e) {
     e.preventDefault();
@@ -1015,13 +1062,39 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-8">
+
+      {/* Quit confirmation dialog */}
+      {showQuit && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 px-4">
+          <div className="bg-gray-800 border border-gray-700 rounded-2xl p-6 max-w-sm w-full text-center shadow-2xl">
+            <p className="text-white font-semibold text-lg mb-2">Lopeta harjoittelu?</p>
+            <p className="text-gray-400 text-sm mb-6">
+              Sinulla on <span className="text-white font-medium">{uniqueInLive} sanaa</span> kesken — haluatko varmasti lopettaa?
+            </p>
+            <div className="flex gap-3">
+              <button onClick={() => setShowQuit(false)}
+                className="flex-1 py-2.5 bg-gray-700 hover:bg-gray-600 text-white font-medium rounded-xl transition-colors">
+                Jatka
+              </button>
+              <button onClick={onDone}
+                className="flex-1 py-2.5 bg-red-700 hover:bg-red-600 text-white font-semibold rounded-xl transition-colors">
+                Kyllä, lopeta
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Toasts */}
       {graduated && (
         <div className="mb-4 bg-amber-500/15 border border-amber-400/40 rounded-xl px-4 py-3 text-center text-amber-300 font-medium animate-pulse">
           🎉 Sana siirtyy tuottovaiheeseen!
         </div>
       )}
-      {levelUp && <div className="mb-4 bg-purple-500/15 border border-purple-400/40 rounded-xl px-4 py-3 text-center text-purple-300 font-medium">⬆️ Uusi taso: {levelUp}!</div>}
+      {levelUp    && <div className="mb-4 bg-purple-500/15 border border-purple-400/40 rounded-xl px-4 py-3 text-center text-purple-300 font-medium">⬆️ Uusi taso: {levelUp}!</div>}
       {streakToast && <div className="mb-4 bg-amber-500/15 border border-amber-400/40 rounded-xl px-4 py-3 text-center text-amber-300 font-medium">{streakToast}</div>}
+      {feedbackMsg && <div className="mb-3 bg-gray-700/80 border border-gray-600 rounded-xl px-4 py-2 text-center text-gray-300 text-sm">{feedbackMsg}</div>}
+
       {/* Session title */}
       {(() => {
         if (studyMode === 'smart') return (
@@ -1029,21 +1102,24 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
         );
         if (studyDeck && decks) {
           const d = decks.find(dk => dk.id === studyDeck);
-          if (d) return (
-            <div className="font-semibold text-sm mb-3" style={{color: d.color}}>{d.name}</div>
-          );
+          if (d) return <div className="font-semibold text-sm mb-3" style={{color: d.color}}>{d.name}</div>;
         }
         return null;
       })()}
+
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-gray-400 text-sm">Kortti {idx + 1} / {queue.length}</span>
+          <button onClick={() => uniqueInLive > 0 ? setShowQuit(true) : onDone()}
+            className="text-gray-500 hover:text-gray-300 text-sm transition-colors">
+            ← Lopeta
+          </button>
+          <span className="text-gray-600 text-sm">|</span>
+          <span className="text-gray-400 text-sm">✓ {doneIds.size} / {totalUnique}</span>
           <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
             cardStage === 2 ? 'bg-purple-500/20 text-purple-300' : 'bg-blue-500/20 text-blue-300'
           }`}>
             {cardStage === 2 ? '✍️ Tuotto' : '🔍 Tunnistus'}
           </span>
-          {/* Deck badge */}
           {decks && card && (() => {
             const d = decks.find(dk => dk.id === (card.deck || 'yleinen'));
             return d ? (
@@ -1056,9 +1132,11 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
         </div>
         <DirectionToggle direction={direction} setDirection={setDirection} />
       </div>
+
+      {/* Progress bar: % of unique cards finished */}
       <div className="w-full bg-gray-800 rounded-full h-1.5 mb-8">
         <div className="bg-amber-500 h-1.5 rounded-full transition-all"
-          style={{ width: `${(idx / queue.length) * 100}%` }} />
+          style={{ width: `${progressPct}%` }} />
       </div>
 
       {isFiEn ? (
@@ -1117,7 +1195,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
               <div className="flip-front absolute inset-0 bg-gray-800 rounded-2xl flex flex-col items-center justify-center p-8 cursor-pointer border border-gray-700 hover:border-amber-500/50 transition-colors"
                 onClick={() => setPhase('answered')}>
                 <p className="text-2xl font-semibold text-white text-center">{parsedPrompt.main}</p>
-                <button onClick={e=>{e.stopPropagation();speak(promptText);}} className="text-gray-500 hover:text-amber-400 text-xl transition-colors mt-2" title="Kuuntele">🔊</button>
+                <button onClick={e => { e.stopPropagation(); speak(promptText); }} className="text-gray-500 hover:text-amber-400 text-xl transition-colors mt-2" title="Kuuntele">🔊</button>
                 {phase === 'question' && <p className="text-gray-500 text-sm mt-4">Klikkaa tai paina Enter kääntääksesi</p>}
               </div>
               <div className="flip-back absolute inset-0 bg-gray-800 rounded-2xl flex flex-col items-center justify-center gap-3 p-8 border border-amber-500/30 cursor-pointer hover:border-amber-400/50 transition-colors"
@@ -1130,7 +1208,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
                       💡 Näytä vinkki
                     </button>
                 )}
-                {card.example && phase==='answered' && (
+                {card.example && phase === 'answered' && (
                   <p className="text-gray-500 text-xs italic mt-2 text-center">„{card.example}"</p>
                 )}
                 <p className="text-gray-600 text-xs mt-1">↩ klikkaa tai Enter palataksesi</p>
