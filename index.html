@@ -147,7 +147,8 @@ const STREAK_KEY  = 'flashcards_streak_v1';
 const ACHIEVE_KEY = 'flashcards_achieve_v1';
 const DECKS_KEY    = 'flashcards_decks_v1';
 const LAST_DECK_KEY = 'flashcards_last_deck';
-const FIRST_KEY   = 'flashcards_first_launch';
+const FIRST_KEY         = 'flashcards_first_launch';
+const SAVED_SESSION_KEY = 'flashcards_session_v1';
 
 const DEFAULT_DECKS = [
   { id:'rahoitus',    name:'🏦 Rahoitus',    color:'#F59E0B' },
@@ -394,6 +395,14 @@ function saveLastDeck(id) { localStorage.setItem(LAST_DECK_KEY, id); }
 function getDeckById(decks, id) { return decks.find(d=>d.id===id) || decks.find(d=>d.id==='yleinen') || decks[0]; }
 function getDeckColor(decks, id) { return getDeckById(decks,id)?.color||'#6B7280'; }
 
+// Saved session helpers (open-ended session persistence)
+function loadSavedSession() {
+  try { return JSON.parse(localStorage.getItem(SAVED_SESSION_KEY)); }
+  catch { return null; }
+}
+function saveSavedSession(data) { localStorage.setItem(SAVED_SESSION_KEY, JSON.stringify(data)); }
+function clearSavedSession()    { localStorage.removeItem(SAVED_SESSION_KEY); }
+
 // Call after each review to update streak state; returns {streakData, goalJustMet, recoveryJustDone, newMilestone}
 function updateStreak(todayCount) {
   const today=dateStr(0), yesterday=dateStr(-1), dayBefore=dateStr(-2);
@@ -638,7 +647,7 @@ function NavBar({ view, setView, dueCount, email, syncing, onSync }) {
 
 // ── Home ──────────────────────────────────────────────────────────────────────
 
-function HomeView({ cards, setView, direction, setDirection, decks, onStudyDeck, onSmartStudy }) {
+function HomeView({ cards, setView, direction, setDirection, decks, onStudyDeck, onSmartStudy, savedSession, onResume, onDismissSession }) {
   const due    = cards.filter(isDue).length;
   const total  = cards.length;
   const stage1 = cards.filter(c => (c.stage || 1) === 1).length;
@@ -737,6 +746,25 @@ function HomeView({ cards, setView, direction, setDirection, decks, onStudyDeck,
           </div>
         );
       })()}
+
+      {/* Resume banner */}
+      {savedSession && savedSession.queueIds && savedSession.queueIds.length > 0 && (
+        <div className="mb-5 bg-indigo-900/25 border border-indigo-500/30 rounded-xl p-4">
+          <p className="text-indigo-200 font-medium text-sm mb-3">
+            📌 Sinulla on <span className="text-white font-bold">{savedSession.queueIds.length}</span> korttia kesken — jatka siitä mihin jäit?
+          </p>
+          <div className="flex gap-2">
+            <button onClick={onResume}
+              className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-lg transition-colors text-sm">
+              Jatka
+            </button>
+            <button onClick={onDismissSession}
+              className="flex-1 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 font-medium rounded-lg transition-colors text-sm">
+              Aloita alusta
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Study mode buttons */}
       <div className="grid grid-cols-2 gap-3 mb-4">
@@ -887,13 +915,29 @@ function RatingButtons({ onRate }) {
   );
 }
 
-function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck, studyMode, decks }) {
-  // Live mutable queue — cards are removed (Oikein) or re-inserted (Vaikea/Uudestaan)
+function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck, studyMode, decks, savedSession }) {
+  // ── Queue state ──────────────────────────────────────────────────────────────
   const [liveQueue,    setLiveQueue]    = useState(() => {
+    if (savedSession) {
+      // Restore from saved session; in-progress (seenIds) cards go first
+      const cardMap = new Map(cards.map(c => [c.id, c]));
+      const seenSet = new Set(savedSession.seenIds || []);
+      const restored = (savedSession.queueIds || []).map(id => cardMap.get(id)).filter(Boolean);
+      const inProgress = restored.filter(c => seenSet.has(c.id));
+      const fresh = restored.filter(c => !seenSet.has(c.id));
+      return [...inProgress, ...fresh];
+    }
     if (studyMode === 'smart') return smartSort(cards.filter(isDue));
     return cards.filter(c => isDue(c) && (studyDeck == null || c.deck === studyDeck));
   });
-  const [doneIds,      setDoneIds]      = useState(() => new Set());
+  const [doneIds,      setDoneIds]      = useState(() =>
+    savedSession ? new Set(savedSession.doneIds || []) : new Set()
+  );
+  const [seenIds,      setSeenIds]      = useState(() =>
+    savedSession ? new Set(savedSession.seenIds || []) : new Set()
+  );
+
+  // ── UI state ─────────────────────────────────────────────────────────────────
   const [phase,        setPhase]        = useState('question');
   const [typed,        setTyped]        = useState('');
   const [correct,      setCorrect]      = useState(null);
@@ -904,34 +948,51 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
   const [levelUp,      setLevelUp]      = useState(null);
   const [streakToast,  setStreakToast]  = useState(null);
   const [feedbackMsg,  setFeedbackMsg]  = useState(null);
+  const [newCardsMsg,  setNewCardsMsg]  = useState(null);
   const [showQuit,     setShowQuit]     = useState(false);
   const inputRef = useRef(null);
-  // Ref so keyboard handler always uses the latest rate() closure
-  const rateRef = useRef(null);
+  const rateRef  = useRef(null); // always points to latest rate() closure
 
-  // Always operate on the head of the queue
-  const card        = liveQueue[0];
+  // ── Derived values ───────────────────────────────────────────────────────────
+  const card         = liveQueue[0];
   const effectiveDir = card ? getCardDirection(card, direction) : 'en-fi';
-  const isFiEn      = effectiveDir === 'fi-en';
-
-  // Progress tracking
+  const isFiEn       = effectiveDir === 'fi-en';
   const uniqueInLive = new Set(liveQueue.map(c => c.id)).size;
   const totalUnique  = doneIds.size + uniqueInLive;
   const progressPct  = totalUnique > 0 ? Math.round(doneIds.size / totalUnique * 100) : 0;
+  const liveIds      = new Set(liveQueue.map(c => c.id));
+  const unseenCount  = cards.filter(c =>
+    (studyDeck == null || c.deck === studyDeck) &&
+    !doneIds.has(c.id) && !liveIds.has(c.id)
+  ).length;
 
-  // Pull unseen cards as buffer when fewer than 5 unique cards remain in queue
-  function fillBuffer(queue, done) {
+  // ── Auto-inject helper (fires when queue < 20 total cards) ───────────────────
+  function autoInject(queue, done) {
+    if (queue.length >= 20) return { queue, added: 0 };
     const ids = new Set(queue.map(c => c.id));
-    if (ids.size >= 5) return queue;
     const eligible = cards.filter(c =>
       (studyDeck == null || c.deck === studyDeck) &&
       !done.has(c.id) && !ids.has(c.id)
     );
-    if (eligible.length === 0) return queue;
-    return [...queue, ...eligible.slice(0, 5 - ids.size)];
+    if (eligible.length === 0) return { queue, added: 0 };
+    const toAdd = eligible.slice(0, 5);
+    return { queue: [...queue, ...toAdd], added: toAdd.length };
   }
 
+  // ── Save current session to localStorage ─────────────────────────────────────
+  function saveCurrentSession(queue, done, seen) {
+    saveSavedSession({
+      queueIds:  queue.map(c => c.id),
+      doneIds:   [...done],
+      seenIds:   [...seen],
+      studyDeck,
+      studyMode,
+    });
+  }
+
+  // ── Effects ──────────────────────────────────────────────────────────────────
   useEffect(() => {
+    if (card) setSeenIds(s => { const ns = new Set(s); ns.add(card.id); return ns; });
     setPhase('question'); setTyped(''); setCorrect(null); setHintShown(false);
   }, [card?.id, direction]);
 
@@ -958,16 +1019,19 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
     return () => window.removeEventListener('keydown', onKey);
   }, [isFiEn, phase, showQuit]);
 
-  // Session complete when live queue is empty
-  if (liveQueue.length === 0) return (
-    <SessionSummaryView
-      sessionCards={sessionCards}
-      sessionXP={sessionXP}
-      history={loadHistory()}
-      streakData={loadStreak()}
-      onDone={onDone}
-    />
-  );
+  // ── Session complete (all cards rated Oikein) ────────────────────────────────
+  if (liveQueue.length === 0) {
+    clearSavedSession();
+    return (
+      <SessionSummaryView
+        sessionCards={sessionCards}
+        sessionXP={sessionXP}
+        history={loadHistory()}
+        streakData={loadStreak()}
+        onDone={onDone}
+      />
+    );
+  }
 
   if (!card) return null;
 
@@ -977,6 +1041,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
   const parsedAnswer = parseBack(answerText);
   const cardStage    = card.stage || 1;
 
+  // ── Rate card ────────────────────────────────────────────────────────────────
   function rate(quality) {
     const isCorrect = quality >= 4;
     recordStudy(isCorrect);
@@ -995,10 +1060,8 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
 
     // XP
     const xpEarned = XP_BY_Q[quality] || 1;
-    const prevXP = loadXP();
-    const newXP  = prevXP + xpEarned;
-    const prevLvl = getLevelIdx(prevXP);
-    const newLvl  = getLevelIdx(newXP);
+    const prevXP = loadXP(), newXP = prevXP + xpEarned;
+    const prevLvl = getLevelIdx(prevXP), newLvl = getLevelIdx(newXP);
     saveXP(newXP);
     if (newLvl > prevLvl) setLevelUp(LEVELS[newLvl].name);
     setSessionXP(x => x + xpEarned);
@@ -1019,35 +1082,37 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
     const newUnlocks = checkNewAchievements(achVals, prevAch);
     if (Object.keys(newUnlocks).length > 0) saveAchievements({ ...prevAch, ...newUnlocks });
 
+    // Queue manipulation
+    let newQueue;
+    let newDone = doneIds;
+
     if (isCorrect) {
-      // Remove card from queue; mark done
-      const newDone = new Set([...doneIds, card.id]);
-      const newQueue = fillBuffer(liveQueue.slice(1), newDone);
+      newDone = new Set([...doneIds, card.id]);
+      newQueue = liveQueue.slice(1);
       setDoneIds(newDone);
-      setLiveQueue(newQueue);
       setFeedbackMsg(null);
     } else {
-      // Re-insert card further ahead in queue
       const offset = quality === 1
         ? Math.floor(Math.random() * 6) + 5    // Vaikea:    5–10 positions
         : Math.floor(Math.random() * 11) + 10; // Uudestaan: 10–20 positions
-      const msg = quality === 1
-        ? '🔄 Tulee pian uudelleen'
-        : '🔄 Tulee hetken kuluttua uudelleen';
+      const msg = quality === 1 ? '🔄 Tulee pian uudelleen' : '🔄 Tulee hetken kuluttua uudelleen';
       setFeedbackMsg(msg);
       setTimeout(() => setFeedbackMsg(null), 2500);
       const rest = liveQueue.slice(1);
       const insertAt = Math.min(offset, rest.length);
-      const newQueue = fillBuffer(
-        [...rest.slice(0, insertAt), card, ...rest.slice(insertAt)],
-        doneIds
-      );
-      setLiveQueue(newQueue);
+      newQueue = [...rest.slice(0, insertAt), card, ...rest.slice(insertAt)];
     }
+
+    // Auto-inject new cards when queue drops below 20
+    const { queue: injectedQueue, added } = autoInject(newQueue, newDone);
+    if (added > 0) {
+      setNewCardsMsg(`✨ ${added} uutta korttia lisätty`);
+      setTimeout(() => setNewCardsMsg(null), 2500);
+    }
+    setLiveQueue(injectedQueue);
     setPhase('question'); setTyped(''); setCorrect(null); setHintShown(false);
   }
 
-  // Keep rateRef current so keyboard handler always uses fresh closure
   rateRef.current = rate;
 
   function checkAnswer(e) {
@@ -1060,25 +1125,27 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
     setPhase('answered');
   }
 
+  // ── Render ───────────────────────────────────────────────────────────────────
   return (
     <div className="max-w-3xl mx-auto px-4 py-8">
 
-      {/* Quit confirmation dialog */}
+      {/* Save & quit dialog */}
       {showQuit && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 px-4">
           <div className="bg-gray-800 border border-gray-700 rounded-2xl p-6 max-w-sm w-full text-center shadow-2xl">
-            <p className="text-white font-semibold text-lg mb-2">Lopeta harjoittelu?</p>
+            <p className="text-white font-semibold text-lg mb-2">Lopeta sessio?</p>
             <p className="text-gray-400 text-sm mb-6">
-              Sinulla on <span className="text-white font-medium">{uniqueInLive} sanaa</span> kesken — haluatko varmasti lopettaa?
+              Edistymisesi tallennetaan — voit jatkaa siitä mihin jäit ensi kerralla.<br />
+              <span className="text-gray-500 mt-1 block">({uniqueInLive} korttia kesken)</span>
             </p>
             <div className="flex gap-3">
               <button onClick={() => setShowQuit(false)}
                 className="flex-1 py-2.5 bg-gray-700 hover:bg-gray-600 text-white font-medium rounded-xl transition-colors">
                 Jatka
               </button>
-              <button onClick={onDone}
-                className="flex-1 py-2.5 bg-red-700 hover:bg-red-600 text-white font-semibold rounded-xl transition-colors">
-                Kyllä, lopeta
+              <button onClick={() => { saveCurrentSession(liveQueue, doneIds, seenIds); onDone(); }}
+                className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-xl transition-colors">
+                💾 Tallenna ja lopeta
               </button>
             </div>
           </div>
@@ -1086,20 +1153,15 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
       )}
 
       {/* Toasts */}
-      {graduated && (
-        <div className="mb-4 bg-amber-500/15 border border-amber-400/40 rounded-xl px-4 py-3 text-center text-amber-300 font-medium animate-pulse">
-          🎉 Sana siirtyy tuottovaiheeseen!
-        </div>
-      )}
-      {levelUp    && <div className="mb-4 bg-purple-500/15 border border-purple-400/40 rounded-xl px-4 py-3 text-center text-purple-300 font-medium">⬆️ Uusi taso: {levelUp}!</div>}
+      {graduated   && <div className="mb-4 bg-amber-500/15 border border-amber-400/40 rounded-xl px-4 py-3 text-center text-amber-300 font-medium animate-pulse">🎉 Sana siirtyy tuottovaiheeseen!</div>}
+      {levelUp     && <div className="mb-4 bg-purple-500/15 border border-purple-400/40 rounded-xl px-4 py-3 text-center text-purple-300 font-medium">⬆️ Uusi taso: {levelUp}!</div>}
       {streakToast && <div className="mb-4 bg-amber-500/15 border border-amber-400/40 rounded-xl px-4 py-3 text-center text-amber-300 font-medium">{streakToast}</div>}
       {feedbackMsg && <div className="mb-3 bg-gray-700/80 border border-gray-600 rounded-xl px-4 py-2 text-center text-gray-300 text-sm">{feedbackMsg}</div>}
+      {newCardsMsg && <div className="mb-3 bg-green-900/30 border border-green-600/30 rounded-xl px-4 py-2 text-center text-green-300 text-sm">{newCardsMsg}</div>}
 
       {/* Session title */}
       {(() => {
-        if (studyMode === 'smart') return (
-          <div className="text-amber-400 font-semibold text-sm mb-3">🔀 Älykäs kertaus</div>
-        );
+        if (studyMode === 'smart') return <div className="text-amber-400 font-semibold text-sm mb-3">🔀 Älykäs kertaus</div>;
         if (studyDeck && decks) {
           const d = decks.find(dk => dk.id === studyDeck);
           if (d) return <div className="font-semibold text-sm mb-3" style={{color: d.color}}>{d.name}</div>;
@@ -1107,14 +1169,14 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
         return null;
       })()}
 
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2 flex-wrap">
-          <button onClick={() => uniqueInLive > 0 ? setShowQuit(true) : onDone()}
+          <button onClick={() => setShowQuit(true)}
             className="text-gray-500 hover:text-gray-300 text-sm transition-colors">
-            ← Lopeta
+            ← Lopeta sessio
           </button>
-          <span className="text-gray-600 text-sm">|</span>
-          <span className="text-gray-400 text-sm">✓ {doneIds.size} / {totalUnique}</span>
+          <span className="text-gray-700">|</span>
+          <span className="text-gray-400 text-xs">✓ {doneIds.size} / {totalUnique}</span>
           <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
             cardStage === 2 ? 'bg-purple-500/20 text-purple-300' : 'bg-blue-500/20 text-blue-300'
           }`}>
@@ -1133,7 +1195,12 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
         <DirectionToggle direction={direction} setDirection={setDirection} />
       </div>
 
-      {/* Progress bar: % of unique cards finished */}
+      {/* Queue status */}
+      <div className="text-gray-600 text-xs mb-3">
+        🔄 {uniqueInLive} kesken · 📚 {unseenCount} uutta
+      </div>
+
+      {/* Progress bar */}
       <div className="w-full bg-gray-800 rounded-full h-1.5 mb-8">
         <div className="bg-amber-500 h-1.5 rounded-full transition-all"
           style={{ width: `${progressPct}%` }} />
@@ -1945,8 +2012,9 @@ function App() {
     if (!localStorage.getItem(DECKS_KEY)) { saveDecks(DEFAULT_DECKS); return DEFAULT_DECKS; }
     return stored;
   });
-  const [studyDeck,  setStudyDeck]  = useState(null);
-  const [studyMode,  setStudyMode]  = useState('deck'); // 'deck' | 'smart'
+  const [studyDeck,     setStudyDeck]     = useState(null);
+  const [studyMode,     setStudyMode]     = useState('deck'); // 'deck' | 'smart'
+  const [savedSession,  setSavedSession]  = useState(loadSavedSession);
 
   useEffect(() => {
     sb.auth.getSession().then(({ data: { session } }) => {
@@ -2010,15 +2078,31 @@ function App() {
   }
 
   function handleStudyDeck(deckId) {
-    setStudyDeck(deckId);
-    setStudyMode('deck');
-    setView('study');
+    clearSavedSession(); setSavedSession(null);
+    setStudyDeck(deckId); setStudyMode('deck'); setView('study');
   }
 
   function handleSmartStudy() {
-    setStudyDeck(null);
-    setStudyMode('smart');
+    clearSavedSession(); setSavedSession(null);
+    setStudyDeck(null); setStudyMode('smart'); setView('study');
+  }
+
+  function handleResume() {
+    if (savedSession) {
+      setStudyDeck(savedSession.studyDeck || null);
+      setStudyMode(savedSession.studyMode || 'deck');
+    }
     setView('study');
+  }
+
+  function handleDismissSession() {
+    clearSavedSession(); setSavedSession(null);
+  }
+
+  function handleStudyDone() {
+    setStudyDeck(null); setStudyMode('deck');
+    setSavedSession(loadSavedSession()); // reload — may have been saved on quit
+    setView('home');
   }
 
   const dueCount = cards.filter(isDue).length;
@@ -2051,8 +2135,8 @@ function App() {
         </div>
       )}
       <main>
-        {view === 'home'    && <HomeView cards={cards} setView={setView} direction={direction} setDirection={setDirection} decks={decks} onStudyDeck={handleStudyDeck} onSmartStudy={handleSmartStudy} />}
-        {view === 'study'   && <StudyView cards={cards} setCards={setCards} direction={direction} setDirection={setDirection} onDone={() => { setStudyDeck(null); setStudyMode('deck'); setView('home'); }} studyDeck={studyDeck} studyMode={studyMode} decks={decks} />}
+        {view === 'home'    && <HomeView cards={cards} setView={setView} direction={direction} setDirection={setDirection} decks={decks} onStudyDeck={handleStudyDeck} onSmartStudy={handleSmartStudy} savedSession={savedSession} onResume={handleResume} onDismissSession={handleDismissSession} />}
+        {view === 'study'   && <StudyView cards={cards} setCards={setCards} direction={direction} setDirection={setDirection} onDone={handleStudyDone} studyDeck={studyDeck} studyMode={studyMode} decks={decks} savedSession={savedSession} />}
         {view === 'add'     && <AddCardView cards={cards} setCards={setCards} editCard={editCard} setEditCard={setEditCard} decks={decks} />}
         {view === 'import'  && <ImportView cards={cards} setCards={setCards} decks={decks} />}
         {view === 'manage'  && <ManageView cards={cards} setCards={setCards} setEditCard={setEditCard} setView={setView} decks={decks} />}
