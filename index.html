@@ -478,6 +478,21 @@ function getCourseCountdown() {
   return {days,done:false,pct};
 }
 
+// Smart sort: prioritize overdue 7+ days, then lowest easeFactor, then new cards
+function smartSort(dueCards) {
+  const now = Date.now();
+  const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
+  const g1 = [], g2 = [], g3 = [];
+  for (const c of dueCards) {
+    if (c.repetitions === 0) g3.push(c);
+    else if (now - c.nextReview >= SEVEN_DAYS) g1.push(c);
+    else g2.push(c);
+  }
+  g1.sort((a, b) => a.nextReview - b.nextReview);   // most overdue first
+  g2.sort((a, b) => a.easeFactor - b.easeFactor);   // hardest first
+  return [...g1, ...g2, ...g3];
+}
+
 // Audio pronunciation
 function speak(text) {
   if(!window.speechSynthesis) return;
@@ -623,11 +638,12 @@ function NavBar({ view, setView, dueCount, email, syncing, onSync }) {
 
 // ── Home ──────────────────────────────────────────────────────────────────────
 
-function HomeView({ cards, setView, direction, setDirection, decks, onStudyDeck }) {
+function HomeView({ cards, setView, direction, setDirection, decks, onStudyDeck, onSmartStudy }) {
   const due    = cards.filter(isDue).length;
   const total  = cards.length;
   const stage1 = cards.filter(c => (c.stage || 1) === 1).length;
   const stage2 = cards.filter(c => c.stage === 2).length;
+  const [showDecks, setShowDecks] = React.useState(false);
   return (
     <div className="max-w-3xl mx-auto px-4 py-10">
       <div className="flex items-start justify-between mb-2">
@@ -722,43 +738,58 @@ function HomeView({ cards, setView, direction, setDirection, decks, onStudyDeck 
         );
       })()}
 
-      <div className="space-y-3 mb-4">
-        {/* All cards option */}
-        <button onClick={()=>onStudyDeck(null)}
-          className="w-full flex items-center justify-between px-4 py-3.5 bg-amber-500 hover:bg-amber-400 text-gray-900 font-bold rounded-xl transition-colors">
-          <span>📖 Kaikki kortit</span>
-          <span className="text-sm font-medium opacity-70">{due} erääntynyt →</span>
+      {/* Study mode buttons */}
+      <div className="grid grid-cols-2 gap-3 mb-4">
+        <button onClick={() => setShowDecks(s => !s)}
+          className={`flex items-center justify-center gap-2 px-4 py-3.5 border font-semibold rounded-xl transition-colors ${showDecks ? 'bg-gray-700 border-gray-500 text-white' : 'bg-gray-800 border-gray-600 hover:bg-gray-700 text-gray-200'}`}>
+          📦 Valitse pakka
         </button>
-        {/* Per-deck rows */}
-        {decks.map(deck => {
-          const deckCards = cards.filter(c=>c.deck===deck.id);
-          const dueCount  = deckCards.filter(isDue).length;
-          const mastered  = deckCards.filter(c=>c.repetitions>=3).length;
-          if (deckCards.length === 0) return null;
-          return (
-            <button key={deck.id} onClick={()=>onStudyDeck(deck.id)}
-              className="w-full flex items-center gap-3 px-4 py-3 bg-gray-800 hover:bg-gray-750 border border-gray-700 hover:border-opacity-100 rounded-xl transition-colors text-left"
-              style={{borderColor: dueCount>0 ? deck.color+'66' : undefined}}>
-              <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{backgroundColor:deck.color}} />
-              <div className="flex-1 min-w-0">
-                <div className="text-white font-medium text-sm">{deck.name}</div>
-                <div className="text-gray-500 text-xs">{mastered}/{deckCards.length} hallittu</div>
-              </div>
-              {dueCount > 0 && (
-                <span className="text-xs font-semibold px-2 py-1 rounded-full shrink-0"
-                  style={{backgroundColor:deck.color+'33', color:deck.color}}>
-                  {dueCount} →
-                </span>
-              )}
-            </button>
-          );
-        })}
-        {cards.length === 0 && (
-          <div className="w-full py-4 bg-gray-800 text-gray-400 font-medium rounded-xl text-center">
-            Ei kortteja — lisää ensimmäinen kortti!
-          </div>
-        )}
+        <button onClick={onSmartStudy}
+          className="flex items-center justify-center gap-2 px-4 py-3.5 bg-amber-500 hover:bg-amber-400 text-gray-900 font-bold rounded-xl transition-colors">
+          🔀 Älykäs kertaus
+        </button>
       </div>
+
+      {/* Collapsible deck list */}
+      {showDecks && (
+        <div className="space-y-2 mb-4">
+          {/* All cards option */}
+          <button onClick={() => onStudyDeck(null)}
+            className="w-full flex items-center justify-between px-4 py-3 bg-gray-700 hover:bg-gray-600 border border-gray-600 text-white font-medium rounded-xl transition-colors">
+            <span>📖 Kaikki kortit</span>
+            <span className="text-sm opacity-60">{due} erääntynyt →</span>
+          </button>
+          {/* Per-deck rows */}
+          {decks.map(deck => {
+            const deckCards = cards.filter(c => c.deck === deck.id);
+            const dueCount  = deckCards.filter(isDue).length;
+            const mastered  = deckCards.filter(c => c.repetitions >= 3).length;
+            if (deckCards.length === 0) return null;
+            return (
+              <button key={deck.id} onClick={() => onStudyDeck(deck.id)}
+                className="w-full flex items-center gap-3 px-4 py-3 bg-gray-800 hover:bg-gray-750 border border-gray-700 rounded-xl transition-colors text-left"
+                style={{borderColor: dueCount > 0 ? deck.color + '66' : undefined}}>
+                <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{backgroundColor: deck.color}} />
+                <div className="flex-1 min-w-0">
+                  <div className="text-white font-medium text-sm">{deck.name}</div>
+                  <div className="text-gray-500 text-xs">{mastered}/{deckCards.length} hallittu</div>
+                </div>
+                {dueCount > 0 && (
+                  <span className="text-xs font-semibold px-2 py-1 rounded-full shrink-0"
+                    style={{backgroundColor: deck.color + '33', color: deck.color}}>
+                    {dueCount} →
+                  </span>
+                )}
+              </button>
+            );
+          })}
+          {cards.length === 0 && (
+            <div className="w-full py-4 bg-gray-800 text-gray-400 font-medium rounded-xl text-center">
+              Ei kortteja — lisää ensimmäinen kortti!
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -855,8 +886,11 @@ function RatingButtons({ onRate }) {
   );
 }
 
-function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck }) {
-  const [queue]                         = useState(() => cards.filter(c => isDue(c) && (studyDeck==null || c.deck===studyDeck)));
+function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck, studyMode, decks }) {
+  const [queue]                         = useState(() => {
+    if (studyMode === 'smart') return smartSort(cards.filter(isDue));
+    return cards.filter(c => isDue(c) && (studyDeck == null || c.deck === studyDeck));
+  });
   const [idx,           setIdx]         = useState(0);
   const [phase,         setPhase]       = useState('question');
   const [typed,         setTyped]       = useState('');
@@ -988,14 +1022,37 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
       )}
       {levelUp && <div className="mb-4 bg-purple-500/15 border border-purple-400/40 rounded-xl px-4 py-3 text-center text-purple-300 font-medium">⬆️ Uusi taso: {levelUp}!</div>}
       {streakToast && <div className="mb-4 bg-amber-500/15 border border-amber-400/40 rounded-xl px-4 py-3 text-center text-amber-300 font-medium">{streakToast}</div>}
+      {/* Session title */}
+      {(() => {
+        if (studyMode === 'smart') return (
+          <div className="text-amber-400 font-semibold text-sm mb-3">🔀 Älykäs kertaus</div>
+        );
+        if (studyDeck && decks) {
+          const d = decks.find(dk => dk.id === studyDeck);
+          if (d) return (
+            <div className="font-semibold text-sm mb-3" style={{color: d.color}}>{d.name}</div>
+          );
+        }
+        return null;
+      })()}
       <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="text-gray-400 text-sm">Kortti {idx + 1} / {queue.length}</span>
           <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
             cardStage === 2 ? 'bg-purple-500/20 text-purple-300' : 'bg-blue-500/20 text-blue-300'
           }`}>
             {cardStage === 2 ? '✍️ Tuotto' : '🔍 Tunnistus'}
           </span>
+          {/* Deck badge */}
+          {decks && card && (() => {
+            const d = decks.find(dk => dk.id === (card.deck || 'yleinen'));
+            return d ? (
+              <span className="text-xs px-2 py-0.5 rounded-full font-medium"
+                style={{backgroundColor: d.color + '33', color: d.color}}>
+                {d.name}
+              </span>
+            ) : null;
+          })()}
         </div>
         <DirectionToggle direction={direction} setDirection={setDirection} />
       </div>
@@ -1811,6 +1868,7 @@ function App() {
     return stored;
   });
   const [studyDeck,  setStudyDeck]  = useState(null);
+  const [studyMode,  setStudyMode]  = useState('deck'); // 'deck' | 'smart'
 
   useEffect(() => {
     sb.auth.getSession().then(({ data: { session } }) => {
@@ -1875,6 +1933,13 @@ function App() {
 
   function handleStudyDeck(deckId) {
     setStudyDeck(deckId);
+    setStudyMode('deck');
+    setView('study');
+  }
+
+  function handleSmartStudy() {
+    setStudyDeck(null);
+    setStudyMode('smart');
     setView('study');
   }
 
@@ -1908,8 +1973,8 @@ function App() {
         </div>
       )}
       <main>
-        {view === 'home'    && <HomeView cards={cards} setView={setView} direction={direction} setDirection={setDirection} decks={decks} onStudyDeck={handleStudyDeck} />}
-        {view === 'study'   && <StudyView cards={cards} setCards={setCards} direction={direction} setDirection={setDirection} onDone={() => { setStudyDeck(null); setView('home'); }} studyDeck={studyDeck} />}
+        {view === 'home'    && <HomeView cards={cards} setView={setView} direction={direction} setDirection={setDirection} decks={decks} onStudyDeck={handleStudyDeck} onSmartStudy={handleSmartStudy} />}
+        {view === 'study'   && <StudyView cards={cards} setCards={setCards} direction={direction} setDirection={setDirection} onDone={() => { setStudyDeck(null); setStudyMode('deck'); setView('home'); }} studyDeck={studyDeck} studyMode={studyMode} decks={decks} />}
         {view === 'add'     && <AddCardView cards={cards} setCards={setCards} editCard={editCard} setEditCard={setEditCard} decks={decks} />}
         {view === 'import'  && <ImportView cards={cards} setCards={setCards} decks={decks} />}
         {view === 'manage'  && <ManageView cards={cards} setCards={setCards} setEditCard={setEditCard} setView={setView} decks={decks} />}
