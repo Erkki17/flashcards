@@ -145,7 +145,18 @@ const HISTORY_KEY   = 'flashcards_history';
 const XP_KEY      = 'flashcards_xp_v1';
 const STREAK_KEY  = 'flashcards_streak_v1';
 const ACHIEVE_KEY = 'flashcards_achieve_v1';
+const DECKS_KEY    = 'flashcards_decks_v1';
+const LAST_DECK_KEY = 'flashcards_last_deck';
 const FIRST_KEY   = 'flashcards_first_launch';
+
+const DEFAULT_DECKS = [
+  { id:'rahoitus',    name:'🏦 Rahoitus',    color:'#F59E0B' },
+  { id:'kurssikirja', name:'📚 Kurssikirja', color:'#3B82F6' },
+  { id:'matkailu',    name:'✈️ Matkailu',    color:'#10B981' },
+  { id:'akateeminen', name:'📝 Akateeminen', color:'#8B5CF6' },
+  { id:'kielioppi',   name:'🔤 Kielioppi',   color:'#EF4444' },
+  { id:'yleinen',     name:'📦 Yleinen',      color:'#6B7280' },
+];
 const DAILY_GOAL  = 50;
 const RECOVERY_GOAL = 100;
 const COURSE_DATE = new Date('2026-09-01');
@@ -176,31 +187,31 @@ const ACHIEVEMENTS_DEF = [
 ];
 
 const PRELOADED = [
-  {front:"send — sent / sent",      back:"lähettää",            example:"Please send me the report by Friday."},
-  {front:"choose — chose / chosen", back:"valita",              example:"She chose the best candidate for the role."},
-  {front:"write — wrote / written", back:"kirjoittaa",          example:"He wrote a detailed financial report."},
-  {front:"take — took / taken",     back:"ottaa",               example:"The CEO took a bold decision."},
-  {front:"give — gave / given",     back:"antaa",               example:"The bank gave us a loan at 3% interest."},
-  {front:"find — found / found",    back:"löytää",              example:"We found a solution to the budget problem."},
-  {front:"think — thought / thought",back:"ajatella",           example:"I think this investment carries high risk."},
-  {front:"buy — bought / bought",   back:"ostaa",               example:"They bought shares at a low price."},
-  {front:"sell — sold / sold",      back:"myydä",               example:"He sold his entire portfolio before the crash."},
-  {front:"hold — held / held",      back:"pitää / omistaa",     example:"She held her position despite market pressure."},
-  {front:"rise — rose / risen",     back:"nousta",              example:"Interest rates have risen sharply this quarter."},
-  {front:"fall — fell / fallen",    back:"laskea",              example:"The stock has fallen 30% since January."},
-  {front:"make — made / made",      back:"tehdä",               example:"The company made a profit for the first time."},
-  {front:"become — became / become",back:"tulla joksikin",      example:"She became the CFO after years of hard work."},
-  {front:"begin — began / begun",   back:"aloittaa",            example:"The merger negotiations began last month."},
-  {front:"revenue",    back:"liikevaihto — total income from sales",        example:"The company's revenue grew 20% last year."},
-  {front:"equity",     back:"oma pääoma — ownership value in a company",    example:"She holds 30% equity in the startup."},
-  {front:"liability",  back:"velka / vastuu — what a company owes",         example:"The loan appears as a liability on the balance sheet."},
-  {front:"asset",      back:"omaisuuserä — what a company owns",            example:"Real estate is considered a long-term asset."},
-  {front:"portfolio",  back:"sijoitussalkku — collection of investments",   example:"He diversified his portfolio with bonds and stocks."},
-  {front:"yield",      back:"tuotto — return on an investment",             example:"The bond offers a 5% annual yield."},
-  {front:"dividend",   back:"osinko — profit paid to shareholders",         example:"Shareholders received a €2 dividend per share."},
-  {front:"volatility", back:"volatiliteetti — degree of price variation",   example:"High volatility makes the market unpredictable."},
-  {front:"liquidity",  back:"likviditeetti — ease of converting to cash",   example:"Cash has the highest liquidity of all assets."},
-  {front:"leverage",   back:"velkavipu — using borrowed capital to invest", example:"The fund uses leverage to amplify returns."},
+  {front:"send — sent / sent",      back:"lähettää",            example:"Please send me the report by Friday.",          deck:'kielioppi'},
+  {front:"choose — chose / chosen", back:"valita",              example:"She chose the best candidate for the role.",     deck:'kielioppi'},
+  {front:"write — wrote / written", back:"kirjoittaa",          example:"He wrote a detailed financial report.",          deck:'kielioppi'},
+  {front:"take — took / taken",     back:"ottaa",               example:"The CEO took a bold decision.",                  deck:'kielioppi'},
+  {front:"give — gave / given",     back:"antaa",               example:"The bank gave us a loan at 3% interest.",        deck:'kielioppi'},
+  {front:"find — found / found",    back:"löytää",              example:"We found a solution to the budget problem.",     deck:'kielioppi'},
+  {front:"think — thought / thought",back:"ajatella",           example:"I think this investment carries high risk.",     deck:'kielioppi'},
+  {front:"buy — bought / bought",   back:"ostaa",               example:"They bought shares at a low price.",             deck:'kielioppi'},
+  {front:"sell — sold / sold",      back:"myydä",               example:"He sold his entire portfolio before the crash.", deck:'kielioppi'},
+  {front:"hold — held / held",      back:"pitää / omistaa",     example:"She held her position despite market pressure.", deck:'kielioppi'},
+  {front:"rise — rose / risen",     back:"nousta",              example:"Interest rates have risen sharply this quarter.",deck:'kielioppi'},
+  {front:"fall — fell / fallen",    back:"laskea",              example:"The stock has fallen 30% since January.",        deck:'kielioppi'},
+  {front:"make — made / made",      back:"tehdä",               example:"The company made a profit for the first time.",  deck:'kielioppi'},
+  {front:"become — became / become",back:"tulla joksikin",      example:"She became the CFO after years of hard work.",   deck:'kielioppi'},
+  {front:"begin — began / begun",   back:"aloittaa",            example:"The merger negotiations began last month.",      deck:'kielioppi'},
+  {front:"revenue",    back:"liikevaihto — total income from sales",        example:"The company's revenue grew 20% last year.",          deck:'rahoitus'},
+  {front:"equity",     back:"oma pääoma — ownership value in a company",    example:"She holds 30% equity in the startup.",               deck:'rahoitus'},
+  {front:"liability",  back:"velka / vastuu — what a company owes",         example:"The loan appears as a liability on the balance sheet.",deck:'rahoitus'},
+  {front:"asset",      back:"omaisuuserä — what a company owns",            example:"Real estate is considered a long-term asset.",        deck:'rahoitus'},
+  {front:"portfolio",  back:"sijoitussalkku — collection of investments",   example:"He diversified his portfolio with bonds and stocks.", deck:'rahoitus'},
+  {front:"yield",      back:"tuotto — return on an investment",             example:"The bond offers a 5% annual yield.",                  deck:'rahoitus'},
+  {front:"dividend",   back:"osinko — profit paid to shareholders",         example:"Shareholders received a €2 dividend per share.",      deck:'rahoitus'},
+  {front:"volatility", back:"volatiliteetti — degree of price variation",   example:"High volatility makes the market unpredictable.",     deck:'rahoitus'},
+  {front:"liquidity",  back:"likviditeetti — ease of converting to cash",   example:"Cash has the highest liquidity of all assets.",       deck:'rahoitus'},
+  {front:"leverage",   back:"velkavipu — using borrowed capital to invest", example:"The fund uses leverage to amplify returns.",          deck:'rahoitus'},
 ];
 
 const GRAMMAR_DRILLS = {
@@ -244,10 +255,10 @@ const GRAMMAR_DRILLS = {
 
 // ── Core helpers ──────────────────────────────────────────────────────────────
 
-function newCard(front, back, example=null) {
+function newCard(front, back, example=null, deck='yleinen') {
   return {
     id: crypto.randomUUID(),
-    front, back, example,
+    front, back, example, deck,
     interval: 0, repetitions: 0, easeFactor: 2.5,
     nextReview: Date.now(),
     stage: 1,
@@ -313,6 +324,8 @@ function loadCards() {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(cards));
       localStorage.setItem(MIGRATE_KEY, '1');
     }
+    // Migrate: add deck field to cards that don't have it
+    cards = cards.map(c => c.deck ? c : { ...c, deck: 'yleinen' });
     return cards;
   } catch { return null; }
 }
@@ -369,6 +382,18 @@ function saveStreak(s) { localStorage.setItem(STREAK_KEY, JSON.stringify(s)); }
 function dateStr(offsetDays=0) {
   const d=new Date(); d.setDate(d.getDate()+offsetDays); return d.toISOString().slice(0,10);
 }
+
+// Deck helpers
+function loadDecks() {
+  try { return JSON.parse(localStorage.getItem(DECKS_KEY)||'null') || DEFAULT_DECKS; }
+  catch { return DEFAULT_DECKS; }
+}
+function saveDecks(d) { localStorage.setItem(DECKS_KEY, JSON.stringify(d)); }
+function loadLastDeck() { return localStorage.getItem(LAST_DECK_KEY)||'yleinen'; }
+function saveLastDeck(id) { localStorage.setItem(LAST_DECK_KEY, id); }
+function getDeckById(decks, id) { return decks.find(d=>d.id===id) || decks.find(d=>d.id==='yleinen') || decks[0]; }
+function getDeckColor(decks, id) { return getDeckById(decks,id)?.color||'#6B7280'; }
+
 // Call after each review to update streak state; returns {streakData, goalJustMet, recoveryJustDone, newMilestone}
 function updateStreak(todayCount) {
   const today=dateStr(0), yesterday=dateStr(-1), dayBefore=dateStr(-2);
@@ -564,6 +589,7 @@ function NavBar({ view, setView, dueCount, email, syncing, onSync }) {
     { id: 'add',     label: 'Lisää kortti' },
     { id: 'import',  label: 'Tuo kortit' },
     { id: 'manage',  label: 'Kortit' },
+    { id: 'decks',   label: 'Paket' },
     { id: 'stats',   label: 'Tilastot' },
     { id: 'grammar', label: 'Kielioppi' },
   ];
@@ -597,7 +623,7 @@ function NavBar({ view, setView, dueCount, email, syncing, onSync }) {
 
 // ── Home ──────────────────────────────────────────────────────────────────────
 
-function HomeView({ cards, setView, direction, setDirection }) {
+function HomeView({ cards, setView, direction, setDirection, decks, onStudyDeck }) {
   const due    = cards.filter(isDue).length;
   const total  = cards.length;
   const stage1 = cards.filter(c => (c.stage || 1) === 1).length;
@@ -696,16 +722,43 @@ function HomeView({ cards, setView, direction, setDirection }) {
         );
       })()}
 
-      {due > 0 ? (
-        <button onClick={() => setView('study')}
-          className="w-full py-4 bg-amber-500 hover:bg-amber-400 text-gray-900 font-bold text-lg rounded-xl transition-colors">
-          Kertaa {due} korttia →
+      <div className="space-y-3 mb-4">
+        {/* All cards option */}
+        <button onClick={()=>onStudyDeck(null)}
+          className="w-full flex items-center justify-between px-4 py-3.5 bg-amber-500 hover:bg-amber-400 text-gray-900 font-bold rounded-xl transition-colors">
+          <span>📖 Kaikki kortit</span>
+          <span className="text-sm font-medium opacity-70">{due} erääntynyt →</span>
         </button>
-      ) : (
-        <div className="w-full py-4 bg-gray-800 text-gray-400 font-medium text-lg rounded-xl text-center">
-          Ei erääntyneitä kortteja — hyvää työtä!
-        </div>
-      )}
+        {/* Per-deck rows */}
+        {decks.map(deck => {
+          const deckCards = cards.filter(c=>c.deck===deck.id);
+          const dueCount  = deckCards.filter(isDue).length;
+          const mastered  = deckCards.filter(c=>c.repetitions>=3).length;
+          if (deckCards.length === 0) return null;
+          return (
+            <button key={deck.id} onClick={()=>onStudyDeck(deck.id)}
+              className="w-full flex items-center gap-3 px-4 py-3 bg-gray-800 hover:bg-gray-750 border border-gray-700 hover:border-opacity-100 rounded-xl transition-colors text-left"
+              style={{borderColor: dueCount>0 ? deck.color+'66' : undefined}}>
+              <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{backgroundColor:deck.color}} />
+              <div className="flex-1 min-w-0">
+                <div className="text-white font-medium text-sm">{deck.name}</div>
+                <div className="text-gray-500 text-xs">{mastered}/{deckCards.length} hallittu</div>
+              </div>
+              {dueCount > 0 && (
+                <span className="text-xs font-semibold px-2 py-1 rounded-full shrink-0"
+                  style={{backgroundColor:deck.color+'33', color:deck.color}}>
+                  {dueCount} →
+                </span>
+              )}
+            </button>
+          );
+        })}
+        {cards.length === 0 && (
+          <div className="w-full py-4 bg-gray-800 text-gray-400 font-medium rounded-xl text-center">
+            Ei kortteja — lisää ensimmäinen kortti!
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -802,8 +855,8 @@ function RatingButtons({ onRate }) {
   );
 }
 
-function StudyView({ cards, setCards, direction, setDirection, onDone }) {
-  const [queue]                         = useState(() => cards.filter(isDue));
+function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck }) {
+  const [queue]                         = useState(() => cards.filter(c => isDue(c) && (studyDeck==null || c.deck===studyDeck)));
   const [idx,           setIdx]         = useState(0);
   const [phase,         setPhase]       = useState('question');
   const [typed,         setTyped]       = useState('');
@@ -1044,10 +1097,11 @@ function StudyView({ cards, setCards, direction, setDirection, onDone }) {
 
 // ── Add / Edit ────────────────────────────────────────────────────────────────
 
-function AddCardView({ cards, setCards, editCard, setEditCard }) {
+function AddCardView({ cards, setCards, editCard, setEditCard, decks }) {
   const [front,   setFront]   = useState(editCard ? editCard.front   : '');
   const [back,    setBack]    = useState(editCard ? editCard.back    : '');
   const [example, setExample] = useState(editCard?.example || '');
+  const [deck,    setDeck]    = useState(editCard?.deck || loadLastDeck());
   const [saved,   setSaved]   = useState(false);
 
   function handleSubmit(e) {
@@ -1055,12 +1109,12 @@ function AddCardView({ cards, setCards, editCard, setEditCard }) {
     if (!front.trim() || !back.trim()) return;
     let updated, cardToSync;
     if (editCard) {
-      const edited = { ...editCard, front: front.trim(), back: back.trim(), example: example.trim() || null };
+      const edited = { ...editCard, front: front.trim(), back: back.trim(), example: example.trim() || null, deck };
       updated = cards.map(c => c.id === editCard.id ? edited : c);
       cardToSync = edited;
       setEditCard(null);
     } else {
-      const card = newCard(front.trim(), back.trim(), example.trim() || null);
+      const card = newCard(front.trim(), back.trim(), example.trim() || null, deck);
       updated = [...cards, card];
       cardToSync = card;
     }
@@ -1094,6 +1148,13 @@ function AddCardView({ cards, setCards, editCard, setEditCard }) {
             className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-amber-500"
             placeholder="Esim. She sold her portfolio before the crash." />
         </div>
+        <div>
+          <label className="block text-gray-400 text-sm mb-1">Pakka</label>
+          <select value={deck} onChange={e=>{setDeck(e.target.value);saveLastDeck(e.target.value);}}
+            className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-amber-500">
+            {decks.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
+        </div>
         <div className="flex gap-3">
           <button type="submit"
             className="flex-1 py-3 bg-amber-500 hover:bg-amber-400 text-gray-900 font-bold rounded-xl transition-colors">
@@ -1114,7 +1175,7 @@ function AddCardView({ cards, setCards, editCard, setEditCard }) {
 
 // ── Import ────────────────────────────────────────────────────────────────────
 
-function ImportView({ cards, setCards }) {
+function ImportView({ cards, setCards, decks }) {
   const [text,  setText]  = useState('');
   const [msg,   setMsg]   = useState('');
   const [error, setError] = useState('');
@@ -1127,7 +1188,11 @@ function ImportView({ cards, setCards }) {
       const existing = new Set(cards.map(c => c.front.toLowerCase()));
       const toAdd = parsed
         .filter(item => item.front && item.back && !existing.has(item.front.toLowerCase()))
-        .map(item => newCard(String(item.front).trim(), String(item.back).trim()));
+        .map(item => {
+          const deckId = item.deck && decks.find(d=>d.id===item.deck||d.name.includes(item.deck)) ?
+            (decks.find(d=>d.id===item.deck)||decks.find(d=>d.name.includes(item.deck))||{id:'yleinen'}).id : 'yleinen';
+          return newCard(String(item.front).trim(), String(item.back).trim(), item.example||null, deckId);
+        });
       if (toAdd.length === 0) { setMsg('Ei uusia kortteja tuotavaksi (kaikki jo olemassa).'); return; }
       const updated = [...cards, ...toAdd];
       setCards(updated); saveCards(updated);
@@ -1157,9 +1222,106 @@ function ImportView({ cards, setCards }) {
   );
 }
 
+// ── Decks ─────────────────────────────────────────────────────────────────────
+
+function DecksView({ cards, decks, setDecks }) {
+  const [newName, setNewName] = useState('');
+  const [editId,  setEditId]  = useState(null);
+  const [editName,setEditName]= useState('');
+
+  function createDeck() {
+    const name = newName.trim();
+    if (!name) return;
+    const id = name.toLowerCase().replace(/[^a-z0-9]/g,'_') + '_' + Date.now();
+    const colors = ['#F59E0B','#3B82F6','#10B981','#8B5CF6','#EF4444','#EC4899','#14B8A6'];
+    const color = colors[decks.length % colors.length];
+    const updated = [...decks, { id, name, color }];
+    setDecks(updated); saveDecks(updated);
+    setNewName('');
+  }
+
+  function renameDeck(id) {
+    const name = editName.trim();
+    if (!name) return;
+    const updated = decks.map(d => d.id===id ? {...d, name} : d);
+    setDecks(updated); saveDecks(updated);
+    setEditId(null); setEditName('');
+  }
+
+  function deleteDeck(id) {
+    const deck = decks.find(d=>d.id===id);
+    if (!deck) return;
+    const cardCount = cards.filter(c=>c.deck===id).length;
+    const msg = cardCount > 0
+      ? `Haluatko varmasti poistaa pakan "${deck.name}" ja kaikki sen ${cardCount} korttia?`
+      : `Haluatko varmasti poistaa pakan "${deck.name}"?`;
+    if (!confirm(msg)) return;
+    const updated = decks.filter(d=>d.id!==id);
+    setDecks(updated); saveDecks(updated);
+  }
+
+  return (
+    <div className="max-w-3xl mx-auto px-4 py-8">
+      <h2 className="text-xl font-bold text-amber-400 mb-6">Sanapakat</h2>
+      <div className="space-y-3 mb-6">
+        {decks.map(deck => {
+          const deckCards = cards.filter(c=>c.deck===deck.id);
+          const mastered  = deckCards.filter(c=>c.repetitions>=3).length;
+          const due       = deckCards.filter(isDue).length;
+          const isDefault = deck.id==='yleinen';
+          return (
+            <div key={deck.id} className="bg-gray-800 rounded-xl p-4 border border-gray-700">
+              {editId===deck.id ? (
+                <div className="flex gap-2">
+                  <input value={editName} onChange={e=>setEditName(e.target.value)}
+                    className="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-amber-500"
+                    onKeyDown={e=>{if(e.key==='Enter')renameDeck(deck.id);if(e.key==='Escape')setEditId(null);}}
+                    autoFocus />
+                  <button onClick={()=>renameDeck(deck.id)} className="px-3 py-1.5 bg-amber-500 text-gray-900 font-medium rounded-lg text-sm">Tallenna</button>
+                  <button onClick={()=>setEditId(null)} className="px-3 py-1.5 bg-gray-700 text-gray-400 rounded-lg text-sm">Peruuta</button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3">
+                  <div className="w-3 h-3 rounded-full shrink-0" style={{backgroundColor:deck.color}} />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-white font-medium">{deck.name}</span>
+                      {due>0 && <span className="text-xs bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded-full">{due} erääntynyt</span>}
+                    </div>
+                    <div className="text-gray-500 text-xs mt-0.5">{deckCards.length} korttia · {mastered} hallittu</div>
+                  </div>
+                  <button onClick={()=>{setEditId(deck.id);setEditName(deck.name);}}
+                    className="text-gray-500 hover:text-amber-400 transition-colors p-1" title="Nimeä uudelleen">✏️</button>
+                  {!isDefault && (
+                    <button onClick={()=>deleteDeck(deck.id)}
+                      className="text-gray-500 hover:text-red-400 transition-colors p-1" title="Poista">🗑️</button>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <div className="bg-gray-800 rounded-xl p-4 border border-gray-700">
+        <p className="text-gray-400 text-sm font-medium mb-3">Luo uusi pakka</p>
+        <div className="flex gap-2">
+          <input value={newName} onChange={e=>setNewName(e.target.value)}
+            className="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-500"
+            placeholder="Pakan nimi, esim. 🏢 Työsanasto"
+            onKeyDown={e=>e.key==='Enter'&&createDeck()} />
+          <button onClick={createDeck} disabled={!newName.trim()}
+            className="px-4 py-2 bg-amber-500 hover:bg-amber-400 disabled:bg-gray-600 text-gray-900 font-medium rounded-lg text-sm transition-colors">
+            Luo
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Manage ────────────────────────────────────────────────────────────────────
 
-function ManageView({ cards, setCards, setEditCard, setView }) {
+function ManageView({ cards, setCards, setEditCard, setView, decks }) {
   const [search, setSearch] = useState('');
   const filtered = cards.filter(
     c => c.front.toLowerCase().includes(search.toLowerCase()) ||
@@ -1197,7 +1359,17 @@ function ManageView({ cards, setCards, setEditCard, setView }) {
                 <p className="text-gray-400 text-sm truncate">{card.back}</p>
                 {card.example && <p className="text-gray-600 text-xs truncate italic">{card.example}</p>}
               </div>
+              <div className="w-2 h-2 rounded-full shrink-0" style={{backgroundColor: getDeckColor(decks, card.deck)}} />
               <span className={`text-xs font-medium ${cls} shrink-0`}>{label}</span>
+              <select value={card.deck||'yleinen'}
+                onChange={e=>{
+                  const updated=cards.map(c=>c.id===card.id?{...c,deck:e.target.value}:c);
+                  setCards(updated);saveCards(updated);dbSaveCard({...card,deck:e.target.value});
+                }}
+                className="text-xs bg-gray-700 border border-gray-600 rounded px-1.5 py-1 text-gray-400 focus:outline-none shrink-0 max-w-[100px]"
+                title="Siirrä pakkaan">
+                {decks.map(d=><option key={d.id} value={d.id}>{d.name.split(' ').slice(1).join(' ')||d.name}</option>)}
+              </select>
               <button onClick={() => { setEditCard(card); setView('add'); }}
                 className="text-gray-400 hover:text-amber-400 transition-colors p-1 shrink-0" title="Muokkaa">✏️</button>
               <button onClick={() => deleteCard(card.id)}
@@ -1250,7 +1422,7 @@ function Heatmap({ history }) {
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
 
-function StatsView({ cards }) {
+function StatsView({ cards, decks }) {
   const [history, setHistory] = useState(loadHistory);
 
   useEffect(() => {
@@ -1318,6 +1490,32 @@ function StatsView({ cards }) {
       <div className="bg-gray-800 rounded-xl p-5">
         <p className="text-gray-400 text-sm mb-4">Aktiivisuus — viimeiset 30 päivää</p>
         <Heatmap history={history} />
+      </div>
+      <div className="mt-6 bg-gray-800 rounded-xl p-5">
+        <p className="text-gray-300 font-medium mb-4">Pakat</p>
+        <div className="space-y-3">
+          {decks.map(deck=>{
+            const dc=cards.filter(c=>c.deck===deck.id);
+            if(dc.length===0) return null;
+            const mastered=dc.filter(c=>c.repetitions>=3).length;
+            const due=dc.filter(isDue).length;
+            const pct=dc.length>0?Math.round(mastered/dc.length*100):0;
+            return (
+              <div key={deck.id}>
+                <div className="flex justify-between text-xs text-gray-400 mb-1">
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full inline-block" style={{backgroundColor:deck.color}}/>
+                    {deck.name}
+                  </span>
+                  <span>{mastered}/{dc.length} hallittu{due>0?` · ${due} erääntynyt`:''}</span>
+                </div>
+                <div className="w-full bg-gray-700 rounded-full h-2">
+                  <div className="h-2 rounded-full transition-all" style={{width:`${pct}%`,backgroundColor:deck.color}}/>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
       <div className="mt-6 bg-gray-800 rounded-xl p-5">
         <div className="flex justify-between items-center mb-4">
@@ -1607,6 +1805,12 @@ function App() {
   const [view,       setView]       = useState('home');
   const [editCard,   setEditCard]   = useState(null);
   const [direction,  setDirection]  = useState(loadDirection);
+  const [decks,      setDecks]      = useState(() => {
+    const stored = loadDecks();
+    if (!localStorage.getItem(DECKS_KEY)) { saveDecks(DEFAULT_DECKS); return DEFAULT_DECKS; }
+    return stored;
+  });
+  const [studyDeck,  setStudyDeck]  = useState(null);
 
   useEffect(() => {
     sb.auth.getSession().then(({ data: { session } }) => {
@@ -1641,7 +1845,7 @@ function App() {
       if (dbCards === null) {
         // Network error — fall back to localStorage
         const local = loadCards();
-        const fallback = local || PRELOADED.map(p => newCard(p.front, p.back, p.example));
+        const fallback = local || PRELOADED.map(p => newCard(p.front, p.back, p.example, p.deck||'yleinen'));
         setCards(fallback); saveCards(fallback);
         setSyncError('DB-virhe: ' + errorMsg);
         return;
@@ -1651,17 +1855,27 @@ function App() {
         const local = loadCards();
         const toUpload = (local && local.length > 0)
           ? local
-          : PRELOADED.map(p => newCard(p.front, p.back, p.example));
+          : PRELOADED.map(p => newCard(p.front, p.back, p.example, p.deck||'yleinen'));
         await Promise.all(toUpload.map(c => dbSaveCard(c)));
         setCards(toUpload); saveCards(toUpload);
       } else {
-        setCards(dbCards); saveCards(dbCards);
+        // Merge deck info from localStorage (deck field is not stored in Supabase)
+        const localCards = loadCards();
+        const localDeckMap = {};
+        (localCards||[]).forEach(c => { if(c.deck) localDeckMap[c.id] = c.deck; });
+        const withDecks = dbCards.map(c => ({ ...c, deck: localDeckMap[c.id] || 'yleinen' }));
+        setCards(withDecks); saveCards(withDecks);
       }
     } catch(e) {
       setSyncError('Virhe: ' + e.message);
     } finally {
       setSyncing(false);
     }
+  }
+
+  function handleStudyDeck(deckId) {
+    setStudyDeck(deckId);
+    setView('study');
   }
 
   const dueCount = cards.filter(isDue).length;
@@ -1694,12 +1908,13 @@ function App() {
         </div>
       )}
       <main>
-        {view === 'home'    && <HomeView cards={cards} setView={setView} direction={direction} setDirection={setDirection} />}
-        {view === 'study'   && <StudyView cards={cards} setCards={setCards} direction={direction} setDirection={setDirection} onDone={() => setView('home')} />}
-        {view === 'add'     && <AddCardView cards={cards} setCards={setCards} editCard={editCard} setEditCard={setEditCard} />}
-        {view === 'import'  && <ImportView cards={cards} setCards={setCards} />}
-        {view === 'manage'  && <ManageView cards={cards} setCards={setCards} setEditCard={setEditCard} setView={setView} />}
-        {view === 'stats'   && <StatsView cards={cards} />}
+        {view === 'home'    && <HomeView cards={cards} setView={setView} direction={direction} setDirection={setDirection} decks={decks} onStudyDeck={handleStudyDeck} />}
+        {view === 'study'   && <StudyView cards={cards} setCards={setCards} direction={direction} setDirection={setDirection} onDone={() => { setStudyDeck(null); setView('home'); }} studyDeck={studyDeck} />}
+        {view === 'add'     && <AddCardView cards={cards} setCards={setCards} editCard={editCard} setEditCard={setEditCard} decks={decks} />}
+        {view === 'import'  && <ImportView cards={cards} setCards={setCards} decks={decks} />}
+        {view === 'manage'  && <ManageView cards={cards} setCards={setCards} setEditCard={setEditCard} setView={setView} decks={decks} />}
+        {view === 'decks'   && <DecksView cards={cards} decks={decks} setDecks={setDecks} />}
+        {view === 'stats'   && <StatsView cards={cards} decks={decks} />}
         {view === 'grammar' && <GrammarView />}
       </main>
     </div>
