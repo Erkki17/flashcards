@@ -1309,7 +1309,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
         </>
       ) : (
         <>
-          <div className="flip-card w-full mb-8" style={{ minHeight: 200 }}>
+          <div key={card.id} className="flip-card w-full mb-8" style={{ minHeight: 200 }}>
             <div className={`flip-inner w-full h-full relative ${phase === 'answered' ? 'flipped' : ''}`} style={{ minHeight: 200 }}>
               <div className="flip-front absolute inset-0 bg-gray-800 rounded-2xl flex flex-col items-center justify-center p-8 cursor-pointer border border-gray-700 hover:border-amber-500/50 transition-colors"
                 onClick={() => setPhase('answered')}>
