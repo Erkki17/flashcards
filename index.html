@@ -1023,8 +1023,8 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
       const tag = document.activeElement?.tagName;
       const inInput = tag === 'BUTTON' || tag === 'INPUT' || tag === 'TEXTAREA';
       if (!isFiEn && !inInput) {
-        if (e.key === 'ArrowUp' && phase === 'question') {
-          e.preventDefault(); setPhase('answered'); return;
+        if (e.key === 'ArrowUp') {
+          e.preventDefault(); setPhase(p => p === 'question' ? 'answered' : 'question'); return;
         }
         if (e.key === 'Enter') {
           setPhase(p => p === 'question' ? 'answered' : 'question'); return;
