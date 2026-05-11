@@ -965,8 +965,10 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
   const [feedbackMsg,  setFeedbackMsg]  = useState(null);
   const [newCardsMsg,  setNewCardsMsg]  = useState(null);
   const [showQuit,     setShowQuit]     = useState(false);
-  const inputRef = useRef(null);
-  const rateRef  = useRef(null); // always points to latest rate() closure
+  const [undoSnapshot, setUndoSnapshot] = useState(null); // one-step undo
+  const inputRef    = useRef(null);
+  const rateRef     = useRef(null); // always points to latest rate() closure
+  const undoTimerRef = useRef(null);
 
   // ── Derived values ───────────────────────────────────────────────────────────
   const card         = liveQueue[0];
@@ -1056,8 +1058,28 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
   const parsedAnswer = parseBack(answerText);
   const cardStage    = card.stage || 1;
 
+  // ── Undo last rating ─────────────────────────────────────────────────────────
+  function undo() {
+    if (!undoSnapshot) return;
+    clearTimeout(undoTimerRef.current);
+    setUndoSnapshot(null);
+    // Restore card to pre-rating state
+    const restoredCards = cards.map(c => c.id === undoSnapshot.card.id ? undoSnapshot.card : c);
+    setCards(restoredCards); saveCards(restoredCards); dbSaveCard(undoSnapshot.card);
+    // Restore queue and done set
+    setLiveQueue(undoSnapshot.liveQueue);
+    setDoneIds(undoSnapshot.doneIds);
+    setFeedbackMsg(null);
+    setPhase('question'); setTyped(''); setCorrect(null); setHintShown(false);
+  }
+
   // ── Rate card ────────────────────────────────────────────────────────────────
   function rate(quality) {
+    // Save snapshot BEFORE any changes so undo can fully reverse this rating
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    setUndoSnapshot({ card: { ...card }, liveQueue: [...liveQueue], doneIds: new Set(doneIds) });
+    undoTimerRef.current = setTimeout(() => setUndoSnapshot(null), 8000);
+
     const isCorrect = quality >= 4;
     recordStudy(isCorrect);
     dbRecordStudy(isCorrect);
@@ -1199,6 +1221,12 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
             className="text-gray-500 hover:text-gray-300 text-sm transition-colors">
             ← Lopeta sessio
           </button>
+          {undoSnapshot && (
+            <button onClick={undo}
+              className="flex items-center gap-1 text-xs px-2.5 py-1 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-400 rounded-lg transition-colors font-medium">
+              ↩ Peru
+            </button>
+          )}
           <span className="text-gray-700">|</span>
           <span className="text-gray-400 text-xs">✓ {doneIds.size} / {totalUnique}</span>
           <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
