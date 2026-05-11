@@ -2041,11 +2041,17 @@ function App() {
   const [savedSession,  setSavedSession]  = useState(loadSavedSession);
 
   useEffect(() => {
-    sb.auth.getSession().then(({ data: { session } }) => {
-      _session = session;
-      if (session) { setAuthState('auth'); syncFromSupabase(); }
-      else          { setAuthState('anon'); }
-    });
+    // Timeout: if auth hangs for 8 s, fall through to anon (shows login screen)
+    const authTimeout = setTimeout(() => setAuthState('anon'), 8000);
+
+    sb.auth.getSession()
+      .then(({ data: { session } }) => {
+        clearTimeout(authTimeout);
+        _session = session;
+        if (session) { setAuthState('auth'); syncFromSupabase(); }
+        else          { setAuthState('anon'); }
+      })
+      .catch(() => { clearTimeout(authTimeout); setAuthState('anon'); });
 
     const { data: { subscription } } = sb.auth.onAuthStateChange((event, session) => {
       _session = session;
@@ -2057,7 +2063,7 @@ function App() {
         setCards([]);
       }
     });
-    return () => subscription.unsubscribe();
+    return () => { clearTimeout(authTimeout); subscription.unsubscribe(); };
   }, []);
 
   async function syncFromSupabase() {
