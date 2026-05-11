@@ -1022,9 +1022,13 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
       if (showQuit) return;
       const tag = document.activeElement?.tagName;
       const inInput = tag === 'BUTTON' || tag === 'INPUT' || tag === 'TEXTAREA';
-      if (e.key === 'Enter' && !isFiEn && !inInput) {
-        setPhase(p => p === 'question' ? 'answered' : 'question');
-        return;
+      if (!isFiEn && !inInput) {
+        if (e.key === 'ArrowUp' && phase === 'question') {
+          e.preventDefault(); setPhase('answered'); return;
+        }
+        if (e.key === 'Enter') {
+          setPhase(p => p === 'question' ? 'answered' : 'question'); return;
+        }
       }
       if (phase === 'answered') {
         if      (e.key === 'ArrowLeft')  { e.preventDefault(); rateRef.current(1); }
@@ -1315,7 +1319,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
                 onClick={() => setPhase('answered')}>
                 <p className="text-2xl font-semibold text-white text-center">{parsedPrompt.main}</p>
                 <button onClick={e => { e.stopPropagation(); speak(promptText); }} className="text-gray-500 hover:text-amber-400 text-xl transition-colors mt-2" title="Kuuntele">🔊</button>
-                {phase === 'question' && <p className="text-gray-500 text-sm mt-4">Klikkaa tai paina Enter kääntääksesi</p>}
+                {phase === 'question' && <p className="text-gray-500 text-sm mt-4">Klikkaa tai paina ↑ / Enter</p>}
               </div>
               <div className="flip-back absolute inset-0 bg-gray-800 rounded-2xl flex flex-col items-center justify-center gap-3 p-8 border border-amber-500/30 cursor-pointer hover:border-amber-400/50 transition-colors"
                 onClick={() => setPhase('question')} title="Klikkaa tai paina Enter kääntääksesi takaisin">
@@ -1338,6 +1342,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
             <button onClick={() => setPhase('answered')}
               className="w-full py-3 bg-gray-700 hover:bg-gray-600 text-white rounded-xl transition-colors flex items-center justify-center gap-2">
               Näytä vastaus
+              <span className="text-gray-500 text-xs border border-gray-600 rounded px-1.5 py-0.5">↑</span>
               <span className="text-gray-500 text-xs border border-gray-600 rounded px-1.5 py-0.5">Enter</span>
             </button>
           ) : (
