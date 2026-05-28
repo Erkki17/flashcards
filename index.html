@@ -965,10 +965,16 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
   const [feedbackMsg,  setFeedbackMsg]  = useState(null);
   const [newCardsMsg,  setNewCardsMsg]  = useState(null);
   const [showQuit,     setShowQuit]     = useState(false);
-  const [undoSnapshot, setUndoSnapshot] = useState(null); // one-step undo
+  const [undoSnapshot,    setUndoSnapshot]    = useState(null);
+  const [letterHintLevel, setLetterHintLevel] = useState(0);
+  const [retypeValue,     setRetypeValue]     = useState('');
+  const [retypeDone,      setRetypeDone]      = useState(false);
+  const [retypeError,     setRetypeError]     = useState(false);
   const inputRef    = useRef(null);
-  const rateRef     = useRef(null); // always points to latest rate() closure
+  const retypeRef   = useRef(null);
+  const rateRef     = useRef(null);
   const undoTimerRef = useRef(null);
+  const canRateRef  = useRef(true); // false when retype required but not done
 
   // ── Derived values ───────────────────────────────────────────────────────────
   const card         = liveQueue[0];
@@ -1011,6 +1017,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
   useEffect(() => {
     if (card) setSeenIds(s => { const ns = new Set(s); ns.add(card.id); return ns; });
     setPhase('question'); setTyped(''); setCorrect(null); setHintShown(false);
+    setLetterHintLevel(0); setRetypeValue(''); setRetypeDone(false); setRetypeError(false);
   }, [card?.id, direction]);
 
   useEffect(() => {
@@ -1030,7 +1037,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
           setPhase(p => p === 'question' ? 'answered' : 'question'); return;
         }
       }
-      if (phase === 'answered') {
+      if (phase === 'answered' && canRateRef.current) {
         if      (e.key === 'ArrowLeft')  { e.preventDefault(); rateRef.current(1); }
         else if (e.key === 'ArrowDown')  { e.preventDefault(); rateRef.current(2); }
         else if (e.key === 'ArrowRight') { e.preventDefault(); rateRef.current(4); }
@@ -1060,7 +1067,12 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
   const answerText   = isFiEn ? card.front : card.back;
   const parsedPrompt = parseBack(promptText);
   const parsedAnswer = parseBack(answerText);
-  const cardStage    = card.stage || 1;
+  const cardStage         = card.stage || 1;
+  const shortAnswerDisplay = card.front.split(' — ')[0].trim();
+  const shortAnswerLower   = shortAnswerDisplay.toLowerCase();
+
+  // Gate arrow-key rating: must have answered correctly OR finished retype
+  canRateRef.current = correct === true || retypeDone;
 
   // ── Undo last rating ─────────────────────────────────────────────────────────
   function undo() {
@@ -1075,6 +1087,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
     setDoneIds(undoSnapshot.doneIds);
     setFeedbackMsg(null);
     setPhase('question'); setTyped(''); setCorrect(null); setHintShown(false);
+    setLetterHintLevel(0); setRetypeValue(''); setRetypeDone(false); setRetypeError(false);
   }
 
   // ── Rate card ────────────────────────────────────────────────────────────────
@@ -1152,9 +1165,20 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
     }
     setLiveQueue(injectedQueue);
     setPhase('question'); setTyped(''); setCorrect(null); setHintShown(false);
+    setLetterHintLevel(0); setRetypeValue(''); setRetypeDone(false); setRetypeError(false);
   }
 
   rateRef.current = rate;
+
+  function handleRetype(e) {
+    e.preventDefault();
+    if (retypeValue.trim().toLowerCase() === shortAnswerLower) {
+      setRetypeDone(true); setRetypeError(false);
+    } else {
+      setRetypeError(true); setRetypeValue('');
+      setTimeout(() => retypeRef.current?.focus(), 50);
+    }
+  }
 
   function checkAnswer(e) {
     e.preventDefault();
@@ -1280,6 +1304,20 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
               <input ref={inputRef} value={typed} onChange={e => setTyped(e.target.value)}
                 className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white text-lg focus:outline-none focus:border-amber-500 transition-colors"
                 placeholder="Kirjoita englanninkielinen vastaus…" autoComplete="off" spellCheck="false" />
+              {/* Letter hint row */}
+              <div className="flex items-center gap-3">
+                <button type="button"
+                  onClick={() => setLetterHintLevel(l => Math.min(l + 1, shortAnswerDisplay.length))}
+                  className="py-2 px-4 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded-xl transition-colors flex-shrink-0">
+                  💡 Auta
+                </button>
+                {letterHintLevel > 0 && (
+                  <span className="font-mono text-lg text-amber-300 tracking-widest">
+                    {shortAnswerDisplay.slice(0, letterHintLevel)}
+                    <span className="text-gray-600">{'_'.repeat(Math.max(0, shortAnswerDisplay.length - letterHintLevel))}</span>
+                  </span>
+                )}
+              </div>
               <button type="submit" disabled={!typed.trim()}
                 className="w-full py-3 bg-amber-500 hover:bg-amber-400 disabled:bg-gray-700 disabled:text-gray-500 text-gray-900 font-bold rounded-xl transition-colors">
                 Tarkista
@@ -1302,12 +1340,36 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
                     <span className="text-gray-400 text-sm">Oikea vastaus: </span>
                     <span className="text-white font-semibold">{answerText}</span>
                   </div>
+                  {/* Re-type reinforcement */}
+                  {!retypeDone ? (
+                    <form onSubmit={handleRetype} className="space-y-2 pt-1">
+                      <p className="text-gray-400 text-sm text-center">✍️ Kirjoita oikea vastaus vahvistukseksi:</p>
+                      <input
+                        ref={retypeRef}
+                        value={retypeValue}
+                        onChange={e => { setRetypeValue(e.target.value); setRetypeError(false); }}
+                        autoFocus
+                        className={`w-full bg-gray-800 rounded-xl px-4 py-3 text-white text-lg focus:outline-none transition-colors ${retypeError ? 'border-2 border-red-500' : 'border border-gray-600 focus:border-amber-500'}`}
+                        placeholder={`Kirjoita: ${shortAnswerDisplay}`}
+                        autoComplete="off" spellCheck="false"
+                      />
+                      {retypeError && <p className="text-red-400 text-xs text-center">Ei täsmää — yritä uudelleen</p>}
+                      <button type="submit" disabled={!retypeValue.trim()}
+                        className="w-full py-2.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-40 text-white font-semibold rounded-xl transition-colors">
+                        Vahvista
+                      </button>
+                    </form>
+                  ) : (
+                    <div className="bg-green-500/10 border border-green-500/30 rounded-xl px-4 py-2.5 text-green-400 text-sm text-center">
+                      ✓ Kirjoitettu oikein!
+                    </div>
+                  )}
                 </div>
               )}
               {card.example && (
                 <p className="text-gray-500 text-xs italic mt-2 text-center">„{card.example}"</p>
               )}
-              <RatingButtons onRate={rate} />
+              {(correct || retypeDone) && <RatingButtons onRate={rate} />}
             </div>
           )}
         </>
