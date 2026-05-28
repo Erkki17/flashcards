@@ -968,8 +968,8 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
   const [undoSnapshot,    setUndoSnapshot]    = useState(null);
   const [letterHintLevel, setLetterHintLevel] = useState(0);
   const [retypeValue,     setRetypeValue]     = useState('');
-  const [retypeDone,      setRetypeDone]      = useState(false);
   const [retypeError,     setRetypeError]     = useState(false);
+  const [pendingQuality,  setPendingQuality]  = useState(null); // set when Vaikea/Uudestaan chosen, triggers retype
   const inputRef    = useRef(null);
   const retypeRef   = useRef(null);
   const rateRef     = useRef(null);
@@ -1017,7 +1017,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
   useEffect(() => {
     if (card) setSeenIds(s => { const ns = new Set(s); ns.add(card.id); return ns; });
     setPhase('question'); setTyped(''); setCorrect(null); setHintShown(false);
-    setLetterHintLevel(0); setRetypeValue(''); setRetypeDone(false); setRetypeError(false);
+    setLetterHintLevel(0); setRetypeValue(''); setRetypeError(false); setPendingQuality(null);
   }, [card?.id, direction]);
 
   useEffect(() => {
@@ -1071,8 +1071,8 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
   const shortAnswerDisplay = card.front.split(' — ')[0].trim();
   const shortAnswerLower   = shortAnswerDisplay.toLowerCase();
 
-  // Gate arrow-key rating: must have answered correctly OR finished retype (either way)
-  canRateRef.current = correct === true || retypeDone || retypeError;
+  // Arrow-key rating allowed only when rating buttons are visible (no pending retype)
+  canRateRef.current = pendingQuality === null;
 
   // ── Undo last rating ─────────────────────────────────────────────────────────
   function undo() {
@@ -1087,7 +1087,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
     setDoneIds(undoSnapshot.doneIds);
     setFeedbackMsg(null);
     setPhase('question'); setTyped(''); setCorrect(null); setHintShown(false);
-    setLetterHintLevel(0); setRetypeValue(''); setRetypeDone(false); setRetypeError(false);
+    setLetterHintLevel(0); setRetypeValue(''); setRetypeError(false); setPendingQuality(null);
   }
 
   // ── Rate card ────────────────────────────────────────────────────────────────
@@ -1165,18 +1165,32 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
     }
     setLiveQueue(injectedQueue);
     setPhase('question'); setTyped(''); setCorrect(null); setHintShown(false);
-    setLetterHintLevel(0); setRetypeValue(''); setRetypeDone(false); setRetypeError(false);
+    setLetterHintLevel(0); setRetypeValue(''); setRetypeError(false); setPendingQuality(null);
   }
 
   rateRef.current = rate;
 
+  // Called when Vaikea or Uudestaan is pressed in FI→EN mode — triggers retype first
+  function handleFiEnRate(quality) {
+    if (quality < 4) {
+      setPendingQuality(quality);
+      setRetypeValue('');
+      setRetypeError(false);
+      setTimeout(() => retypeRef.current?.focus(), 50);
+    } else {
+      rate(quality);
+    }
+  }
+
+  // Retype form submit — must match correct answer to execute the pending rating
   function handleRetype(e) {
     e.preventDefault();
     if (retypeValue.trim().toLowerCase() === shortAnswerLower) {
-      setRetypeDone(true); setRetypeError(false);
+      rate(pendingQuality);
     } else {
-      // One attempt only — reveal correct answer on failure
       setRetypeError(true);
+      setRetypeValue('');
+      setTimeout(() => retypeRef.current?.focus(), 50);
     }
   }
 
@@ -1323,70 +1337,51 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
                 Tarkista
               </button>
             </form>
+          ) : pendingQuality !== null ? (
+            /* Retype reinforcement — shown after pressing Vaikea or Uudestaan */
+            <form onSubmit={handleRetype} className="space-y-3">
+              <div className="bg-gray-800 border border-gray-700 rounded-2xl p-6 text-center">
+                <p className="text-gray-400 text-xs mb-2">Kirjoita englanniksi:</p>
+                <p className="text-xl text-amber-200 font-medium">{parsedPrompt.main}</p>
+              </div>
+              <input
+                ref={retypeRef}
+                value={retypeValue}
+                onChange={e => { setRetypeValue(e.target.value); setRetypeError(false); }}
+                className={`w-full bg-gray-800 rounded-xl px-4 py-3 text-white text-lg focus:outline-none transition-colors ${retypeError ? 'border-2 border-red-500' : 'border border-gray-600 focus:border-amber-500'}`}
+                placeholder="Kirjoita englanninkielinen vastaus…"
+                autoComplete="off" spellCheck="false"
+              />
+              {retypeError && <p className="text-red-400 text-xs text-center">Ei täsmää — yritä uudelleen</p>}
+              <button type="submit" disabled={!retypeValue.trim()}
+                className="w-full py-3 bg-amber-500 hover:bg-amber-400 disabled:bg-gray-700 disabled:text-gray-500 text-gray-900 font-bold rounded-xl transition-colors">
+                Vahvista
+              </button>
+            </form>
           ) : (
+            /* Normal answered view — result + rating buttons */
             <div className="space-y-4">
               {correct ? (
-                <>
-                  <div className="bg-green-500/10 border border-green-500/40 rounded-xl px-5 py-4 text-green-400 text-center">
-                    <span className="font-semibold text-green-300">✓ Oikein!</span>
-                    <span className="ml-2">„{typed}"</span>
-                  </div>
-                  {card.example && (
-                    <p className="text-gray-500 text-xs italic text-center">„{card.example}"</p>
-                  )}
-                  <RatingButtons onRate={rate} />
-                </>
-              ) : retypeDone ? (
-                <>
-                  <div className="bg-green-500/10 border border-green-500/40 rounded-xl px-5 py-4 text-green-400 text-center">
-                    <span className="font-semibold text-green-300">✓ Oikein kirjoitettu!</span>
-                  </div>
-                  {card.example && (
-                    <p className="text-gray-500 text-xs italic text-center">„{card.example}"</p>
-                  )}
-                  <RatingButtons onRate={rate} />
-                </>
-              ) : retypeError ? (
-                <>
-                  <div className="bg-red-500/10 border border-red-500/40 rounded-xl px-5 py-3 text-red-400 text-center text-sm">
-                    <span className="font-semibold text-red-300">✗ Väärin</span>
-                    <span className="ml-2 text-red-400/70">— kirjoitit: „{retypeValue || typed}"</span>
-                  </div>
-                  <div className="bg-gray-800 border border-amber-500/30 rounded-xl px-5 py-4 text-center">
-                    <p className="text-gray-400 text-xs mb-1">Oikea vastaus</p>
-                    <p className="text-white text-xl font-semibold">{answerText}</p>
-                  </div>
-                  {card.example && (
-                    <p className="text-gray-500 text-xs italic text-center">„{card.example}"</p>
-                  )}
-                  <RatingButtons onRate={rate} />
-                </>
+                <div className="bg-green-500/10 border border-green-500/40 rounded-xl px-5 py-4 text-green-400 text-center">
+                  <span className="font-semibold text-green-300">✓ Oikein!</span>
+                  <span className="ml-2">„{typed}"</span>
+                </div>
               ) : (
-                /* First wrong attempt — hide answer, ask to retype */
-                <form onSubmit={handleRetype} className="space-y-3">
-                  <div className="bg-red-500/10 border border-red-500/30 rounded-xl px-5 py-3 text-red-400 text-center text-sm">
+                <div className="space-y-2">
+                  <div className="bg-red-500/10 border border-red-500/40 rounded-xl px-5 py-4 text-red-400 text-center">
                     <span className="font-semibold text-red-300">✗ Väärin</span>
-                    <span className="ml-2 text-red-400/70">— kirjoitit: „{typed}"</span>
+                    <span className="ml-2">— kirjoitit: „{typed}"</span>
                   </div>
-                  <div className="bg-gray-800 border border-gray-700 rounded-2xl p-6 text-center">
-                    <p className="text-gray-400 text-xs mb-2">Kirjoita englanniksi:</p>
-                    <p className="text-xl text-amber-200 font-medium">{parsedPrompt.main}</p>
+                  <div className="bg-gray-800 border border-gray-700 rounded-xl px-5 py-3 text-center">
+                    <span className="text-gray-400 text-sm">Oikea vastaus: </span>
+                    <span className="text-white font-semibold">{answerText}</span>
                   </div>
-                  <input
-                    ref={retypeRef}
-                    value={retypeValue}
-                    onChange={e => setRetypeValue(e.target.value)}
-                    autoFocus
-                    className="w-full bg-gray-800 border border-gray-600 focus:border-amber-500 rounded-xl px-4 py-3 text-white text-lg focus:outline-none transition-colors"
-                    placeholder="Kirjoita englanninkielinen vastaus…"
-                    autoComplete="off" spellCheck="false"
-                  />
-                  <button type="submit" disabled={!retypeValue.trim()}
-                    className="w-full py-3 bg-amber-500 hover:bg-amber-400 disabled:bg-gray-700 disabled:text-gray-500 text-gray-900 font-bold rounded-xl transition-colors">
-                    Tarkista
-                  </button>
-                </form>
+                </div>
               )}
+              {card.example && (
+                <p className="text-gray-500 text-xs italic text-center">„{card.example}"</p>
+              )}
+              <RatingButtons onRate={handleFiEnRate} />
             </div>
           )}
         </>
