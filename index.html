@@ -1071,8 +1071,8 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
   const shortAnswerDisplay = card.front.split(' — ')[0].trim();
   const shortAnswerLower   = shortAnswerDisplay.toLowerCase();
 
-  // Gate arrow-key rating: must have answered correctly OR finished retype
-  canRateRef.current = correct === true || retypeDone;
+  // Gate arrow-key rating: must have answered correctly OR finished retype (either way)
+  canRateRef.current = correct === true || retypeDone || retypeError;
 
   // ── Undo last rating ─────────────────────────────────────────────────────────
   function undo() {
@@ -1175,8 +1175,8 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
     if (retypeValue.trim().toLowerCase() === shortAnswerLower) {
       setRetypeDone(true); setRetypeError(false);
     } else {
-      setRetypeError(true); setRetypeValue('');
-      setTimeout(() => retypeRef.current?.focus(), 50);
+      // One attempt only — reveal correct answer on failure
+      setRetypeError(true);
     }
   }
 
@@ -1326,50 +1326,67 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
           ) : (
             <div className="space-y-4">
               {correct ? (
-                <div className="bg-green-500/10 border border-green-500/40 rounded-xl px-5 py-4 text-green-400 text-center">
-                  <span className="font-semibold text-green-300">✓ Oikein!</span>
-                  <span className="ml-2">„{typed}"</span>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <div className="bg-red-500/10 border border-red-500/40 rounded-xl px-5 py-4 text-red-400 text-center">
-                    <span className="font-semibold text-red-300">✗ Väärin</span>
-                    <span className="ml-2">— kirjoitit: „{typed}"</span>
+                <>
+                  <div className="bg-green-500/10 border border-green-500/40 rounded-xl px-5 py-4 text-green-400 text-center">
+                    <span className="font-semibold text-green-300">✓ Oikein!</span>
+                    <span className="ml-2">„{typed}"</span>
                   </div>
-                  <div className="bg-gray-800 border border-gray-700 rounded-xl px-5 py-3 text-center">
-                    <span className="text-gray-400 text-sm">Oikea vastaus: </span>
-                    <span className="text-white font-semibold">{answerText}</span>
-                  </div>
-                  {/* Re-type reinforcement */}
-                  {!retypeDone ? (
-                    <form onSubmit={handleRetype} className="space-y-2 pt-1">
-                      <p className="text-gray-400 text-sm text-center">✍️ Kirjoita oikea vastaus vahvistukseksi:</p>
-                      <input
-                        ref={retypeRef}
-                        value={retypeValue}
-                        onChange={e => { setRetypeValue(e.target.value); setRetypeError(false); }}
-                        autoFocus
-                        className={`w-full bg-gray-800 rounded-xl px-4 py-3 text-white text-lg focus:outline-none transition-colors ${retypeError ? 'border-2 border-red-500' : 'border border-gray-600 focus:border-amber-500'}`}
-                        placeholder={`Kirjoita: ${shortAnswerDisplay}`}
-                        autoComplete="off" spellCheck="false"
-                      />
-                      {retypeError && <p className="text-red-400 text-xs text-center">Ei täsmää — yritä uudelleen</p>}
-                      <button type="submit" disabled={!retypeValue.trim()}
-                        className="w-full py-2.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-40 text-white font-semibold rounded-xl transition-colors">
-                        Vahvista
-                      </button>
-                    </form>
-                  ) : (
-                    <div className="bg-green-500/10 border border-green-500/30 rounded-xl px-4 py-2.5 text-green-400 text-sm text-center">
-                      ✓ Kirjoitettu oikein!
-                    </div>
+                  {card.example && (
+                    <p className="text-gray-500 text-xs italic text-center">„{card.example}"</p>
                   )}
-                </div>
+                  <RatingButtons onRate={rate} />
+                </>
+              ) : retypeDone ? (
+                <>
+                  <div className="bg-green-500/10 border border-green-500/40 rounded-xl px-5 py-4 text-green-400 text-center">
+                    <span className="font-semibold text-green-300">✓ Oikein kirjoitettu!</span>
+                  </div>
+                  {card.example && (
+                    <p className="text-gray-500 text-xs italic text-center">„{card.example}"</p>
+                  )}
+                  <RatingButtons onRate={rate} />
+                </>
+              ) : retypeError ? (
+                <>
+                  <div className="bg-red-500/10 border border-red-500/40 rounded-xl px-5 py-3 text-red-400 text-center text-sm">
+                    <span className="font-semibold text-red-300">✗ Väärin</span>
+                    <span className="ml-2 text-red-400/70">— kirjoitit: „{retypeValue || typed}"</span>
+                  </div>
+                  <div className="bg-gray-800 border border-amber-500/30 rounded-xl px-5 py-4 text-center">
+                    <p className="text-gray-400 text-xs mb-1">Oikea vastaus</p>
+                    <p className="text-white text-xl font-semibold">{answerText}</p>
+                  </div>
+                  {card.example && (
+                    <p className="text-gray-500 text-xs italic text-center">„{card.example}"</p>
+                  )}
+                  <RatingButtons onRate={rate} />
+                </>
+              ) : (
+                /* First wrong attempt — hide answer, ask to retype */
+                <form onSubmit={handleRetype} className="space-y-3">
+                  <div className="bg-red-500/10 border border-red-500/30 rounded-xl px-5 py-3 text-red-400 text-center text-sm">
+                    <span className="font-semibold text-red-300">✗ Väärin</span>
+                    <span className="ml-2 text-red-400/70">— kirjoitit: „{typed}"</span>
+                  </div>
+                  <div className="bg-gray-800 border border-gray-700 rounded-2xl p-6 text-center">
+                    <p className="text-gray-400 text-xs mb-2">Kirjoita englanniksi:</p>
+                    <p className="text-xl text-amber-200 font-medium">{parsedPrompt.main}</p>
+                  </div>
+                  <input
+                    ref={retypeRef}
+                    value={retypeValue}
+                    onChange={e => setRetypeValue(e.target.value)}
+                    autoFocus
+                    className="w-full bg-gray-800 border border-gray-600 focus:border-amber-500 rounded-xl px-4 py-3 text-white text-lg focus:outline-none transition-colors"
+                    placeholder="Kirjoita englanninkielinen vastaus…"
+                    autoComplete="off" spellCheck="false"
+                  />
+                  <button type="submit" disabled={!retypeValue.trim()}
+                    className="w-full py-3 bg-amber-500 hover:bg-amber-400 disabled:bg-gray-700 disabled:text-gray-500 text-gray-900 font-bold rounded-xl transition-colors">
+                    Tarkista
+                  </button>
+                </form>
               )}
-              {card.example && (
-                <p className="text-gray-500 text-xs italic mt-2 text-center">„{card.example}"</p>
-              )}
-              {(correct || retypeDone) && <RatingButtons onRate={rate} />}
             </div>
           )}
         </>
