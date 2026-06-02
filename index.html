@@ -1357,6 +1357,12 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
                 className="w-full py-3 bg-amber-500 hover:bg-amber-400 disabled:bg-gray-700 disabled:text-gray-500 text-gray-900 font-bold rounded-xl transition-colors">
                 Vahvista
               </button>
+              {retypeError && (
+                <button type="button" onClick={() => rate(pendingQuality)}
+                  className="w-full py-2 text-gray-500 hover:text-gray-300 text-sm transition-colors">
+                  Ohita ja jatka →
+                </button>
+              )}
             </form>
           ) : (
             /* Normal answered view — result + rating buttons */
