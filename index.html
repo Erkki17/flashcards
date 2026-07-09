@@ -1310,7 +1310,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
             <button onClick={() => speak(answerText)} className="text-gray-500 hover:text-amber-400 text-xl transition-colors" title="Kuuntele">🔊</button>
             {parsedPrompt.hint && (hintShown
               ? <p className="text-gray-400 text-sm text-center italic">{parsedPrompt.hint}</p>
-              : <button onClick={() => setHintShown(true)}
+              : <button onClick={() => { setHintShown(true); inputRef.current?.focus(); }}
                   className="text-gray-500 text-xs border border-gray-700 hover:border-amber-500/50 hover:text-amber-400 rounded-lg px-3 py-1.5 transition-colors">
                   💡 Näytä vinkki
                 </button>
@@ -1324,7 +1324,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
               {/* Letter hint row */}
               <div className="flex items-center gap-3">
                 <button type="button"
-                  onClick={() => setLetterHintLevel(l => Math.min(l + 1, shortAnswerDisplay.length))}
+                  onClick={() => { setLetterHintLevel(l => Math.min(l + 1, shortAnswerDisplay.length)); inputRef.current?.focus(); }}
                   className="py-2 px-4 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded-xl transition-colors flex-shrink-0">
                   💡 Auta
                 </button>
