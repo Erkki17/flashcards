@@ -86,6 +86,9 @@ async function dbSaveCard(card) {
         stage: card.stage || 1,
         interval: card.interval, repetitions: card.repetitions,
         ease_factor: card.easeFactor, next_review: card.nextReview,
+        lapses: card.lapses || 0,
+        review_count: card.reviewCount || 0,
+        last_review: card.lastReview || null,
       }),
     });
   } catch(e) { console.error('dbSaveCard:', e.message); }
@@ -111,6 +114,9 @@ async function dbLoadCards() {
       stage: r.stage || 1,
       interval: r.interval, repetitions: r.repetitions,
       easeFactor: r.ease_factor, nextReview: r.next_review,
+      lapses: r.lapses ?? 0,
+      reviewCount: r.review_count ?? 0,
+      lastReview: r.last_review ?? null,
     })), errorMsg: null };
   } catch(e) {
     console.error('dbLoadCards:', e.message);
@@ -151,6 +157,44 @@ async function dbLoadHistory() {
     (data || []).forEach(r => { h[r.date] = { reviewed: r.reviewed, correct: r.correct }; });
     return h;
   } catch(e) { return null; }
+}
+
+// ── Per-review log ────────────────────────────────────────────────────────────
+// One row per review. This is the data FSRS needs to derive stability and
+// difficulty later — it cannot be backfilled, so it is written from day one.
+// Ratings are stored in FSRS convention so no translation is needed at migration:
+//   Vaikea → 1 (Again), Uudestaan → 2 (Hard), Oikein → 3 (Good).
+const FSRS_RATING = { 1: 1, 2: 2, 4: 3 };
+
+async function dbLogReview(entry) {
+  const uid = await getUserId();
+  if (!uid) return;
+  try {
+    await apiFetch('/review_log', {
+      method: 'POST',
+      body: JSON.stringify({
+        id: entry.id,
+        user_id: uid,
+        card_id: String(entry.cardId),
+        reviewed_at: new Date(entry.reviewedAt).toISOString(),
+        rating: entry.rating,
+        state: entry.state,
+        direction: entry.direction,
+        elapsed_days: entry.elapsedDays,
+      }),
+    });
+  } catch(e) { console.error('dbLogReview:', e.message); }
+}
+
+// Undo removes the rating, so the log row must go too or the history lies.
+async function dbDeleteReviewLog(id) {
+  const uid = await getUserId();
+  if (!uid || !id) return;
+  try {
+    await apiFetch(`/review_log?id=eq.${encodeURIComponent(id)}&user_id=eq.${uid}`, {
+      method: 'DELETE',
+    });
+  } catch(e) { console.error('dbDeleteReviewLog:', e.message); }
 }
 
 // ── Constants & preloaded data ────────────────────────────────────────────────
@@ -281,6 +325,9 @@ function newCard(front, back, example=null, deck='yleinen') {
     interval: 0, repetitions: 0, easeFactor: 2.5,
     nextReview: Date.now(),
     stage: 1,
+    // Cumulative counters. `repetitions` is SM-2 state and resets on a lapse;
+    // these never do, and feed leech detection and the future FSRS migration.
+    lapses: 0, reviewCount: 0, lastReview: null,
   };
 }
 
@@ -290,18 +337,71 @@ function getCardDirection(card, direction) {
   return direction;
 }
 
+// Ease-factor deltas per button. The original SM-2 formula gives q=4 a delta of
+// exactly 0.00, so with this app's 1/2/4 buttons the factor could only ever decay
+// toward the 1.3 floor — "ease hell". These deltas let a card recover.
+const EF_DELTA = { 1: -0.20, 2: -0.15, 4: +0.05 };
+const EF_MIN = 1.3, EF_MAX = 2.7;
+const MAX_INTERVAL   = 365;  // days — without a cap intervals run to centuries
+const LAPSE_KEEP     = 0.20; // keep 20% of the interval on a lapse, don't reset to 1
+
 function sm2(card, quality) {
   let { interval, repetitions, easeFactor } = card;
   const q = quality;
-  if (q < 3) { repetitions = 0; interval = 1; }
-  else {
+  let lapses = card.lapses || 0;
+  if (q < 3) {
+    lapses += 1;
+    // Step back one repetition instead of wiping progress: a single bad day
+    // shouldn't demote a nearly-graduated card all the way to the start.
+    repetitions = Math.max(0, repetitions - 1);
+    interval    = Math.max(1, Math.round(interval * LAPSE_KEEP));
+  } else {
     repetitions += 1;
     if      (repetitions === 1) interval = 1;
     else if (repetitions === 2) interval = 6;
     else interval = Math.round(interval * easeFactor);
   }
-  easeFactor = Math.max(1.3, easeFactor + 0.1 - (5 - q) * (0.08 + (5 - q) * 0.02));
-  return { ...card, interval, repetitions, easeFactor, nextReview: Date.now() + interval * 86400000 };
+  interval   = Math.min(interval, MAX_INTERVAL);
+  easeFactor = Math.min(EF_MAX, Math.max(EF_MIN, easeFactor + (EF_DELTA[q] ?? 0)));
+  return {
+    ...card, interval, repetitions, easeFactor, lapses,
+    reviewCount: (card.reviewCount || 0) + 1,
+    lastReview:  Date.now(),
+    nextReview:  Date.now() + interval * 86400000,
+  };
+}
+
+// ── Answer grading ────────────────────────────────────────────────────────────
+// Levenshtein distance, short-circuited at 2 — we only ever care about "≤ 1".
+function editDistance(a, b) {
+  if (Math.abs(a.length - b.length) > 1) return 2;
+  const dp = Array.from({ length: a.length + 1 }, (_, i) => {
+    const row = new Array(b.length + 1).fill(0);
+    row[0] = i;
+    return row;
+  });
+  for (let j = 0; j <= b.length; j++) dp[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[a.length][b.length];
+}
+
+// 'exact' | 'typo' | false. A one-character slip on a word of 5+ letters counts
+// as correct for scheduling, but the UI still asks for a rewrite.
+function gradeAnswer(input, answerField) {
+  const user  = input.trim().toLowerCase();
+  const full  = answerField.trim().toLowerCase();
+  const short = full.split(' — ')[0].trim();
+  if (user === full || user === short) return 'exact';
+  for (const target of [full, short]) {
+    if (target.length >= 5 && editDistance(user, target) <= 1) return 'typo';
+  }
+  return false;
 }
 
 function isDue(card)     { return card.nextReview <= Date.now(); }
@@ -345,6 +445,13 @@ function loadCards() {
     }
     // Migrate: add deck field to cards that don't have it
     cards = cards.map(c => c.deck ? c : { ...c, deck: 'yleinen' });
+    // Migrate: cumulative counters added alongside the review log
+    cards = cards.map(c => ({
+      ...c,
+      lapses:      c.lapses      ?? 0,
+      reviewCount: c.reviewCount ?? 0,
+      lastReview:  c.lastReview  ?? null,
+    }));
     return cards;
   } catch { return null; }
 }
@@ -973,10 +1080,12 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
   const [retypeValue,     setRetypeValue]     = useState('');
   const [retypeError,     setRetypeError]     = useState(false);
   const [pendingQuality,  setPendingQuality]  = useState(null); // set when Vaikea/Uudestaan chosen, triggers retype
+  const [typoPending,     setTypoPending]     = useState(false); // near-miss: counts as correct, still must be rewritten
   const inputRef    = useRef(null);
   const retypeRef   = useRef(null);
   const rateRef     = useRef(null);
   const undoTimerRef = useRef(null);
+  const lastLogIdRef = useRef(null); // review_log row for the rating undo would reverse
   const canRateRef  = useRef(true); // false when retype required but not done
 
   // ── Derived values ───────────────────────────────────────────────────────────
@@ -1020,7 +1129,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
   useEffect(() => {
     if (card) setSeenIds(s => { const ns = new Set(s); ns.add(card.id); return ns; });
     setPhase('question'); setTyped(''); setCorrect(null); setHintShown(false);
-    setLetterHintLevel(0); setRetypeValue(''); setRetypeError(false); setPendingQuality(null);
+    setLetterHintLevel(0); setRetypeValue(''); setRetypeError(false); setPendingQuality(null); setTypoPending(false);
   }, [card?.id, direction]);
 
   useEffect(() => {
@@ -1075,13 +1184,15 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
   const shortAnswerLower   = shortAnswerDisplay.toLowerCase();
 
   // Arrow-key rating allowed only when rating buttons are visible (no pending retype)
-  canRateRef.current = pendingQuality === null;
+  canRateRef.current = pendingQuality === null && !typoPending;
 
   // ── Undo last rating ─────────────────────────────────────────────────────────
   function undo() {
     if (!undoSnapshot) return;
     clearTimeout(undoTimerRef.current);
     setUndoSnapshot(null);
+    // Drop the log row for the rating being reversed
+    if (lastLogIdRef.current) { dbDeleteReviewLog(lastLogIdRef.current); lastLogIdRef.current = null; }
     // Restore card to pre-rating state
     const restoredCards = cards.map(c => c.id === undoSnapshot.card.id ? undoSnapshot.card : c);
     setCards(restoredCards); saveCards(restoredCards); dbSaveCard(undoSnapshot.card);
@@ -1090,7 +1201,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
     setDoneIds(undoSnapshot.doneIds);
     setFeedbackMsg(null);
     setPhase('question'); setTyped(''); setCorrect(null); setHintShown(false);
-    setLetterHintLevel(0); setRetypeValue(''); setRetypeError(false); setPendingQuality(null);
+    setLetterHintLevel(0); setRetypeValue(''); setRetypeError(false); setPendingQuality(null); setTypoPending(false);
   }
 
   // ── Rate card ────────────────────────────────────────────────────────────────
@@ -1103,6 +1214,23 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
     const isCorrect = quality >= 4;
     recordStudy(isCorrect);
     dbRecordStudy(isCorrect);
+
+    // Review log — written before the card is mutated so `card` still holds the
+    // pre-review state the elapsed interval is measured from.
+    const logId = crypto.randomUUID();
+    const now   = Date.now();
+    dbLogReview({
+      id: logId,
+      cardId: card.id,
+      reviewedAt: now,
+      rating: FSRS_RATING[quality] ?? 3,
+      state: (card.reviewCount || 0) === 0 ? 'new' : 'review',
+      direction: effectiveDir,
+      elapsedDays: card.lastReview
+        ? Math.max(0, Math.round((now - card.lastReview) / 86400000))
+        : 0,
+    });
+    lastLogIdRef.current = logId;
 
     let updated = sm2(card, quality);
     updated = { ...updated, stage: cardStage };
@@ -1168,7 +1296,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
     }
     setLiveQueue(injectedQueue);
     setPhase('question'); setTyped(''); setCorrect(null); setHintShown(false);
-    setLetterHintLevel(0); setRetypeValue(''); setRetypeError(false); setPendingQuality(null);
+    setLetterHintLevel(0); setRetypeValue(''); setRetypeError(false); setPendingQuality(null); setTypoPending(false);
   }
 
   rateRef.current = rate;
@@ -1200,11 +1328,24 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
   function checkAnswer(e) {
     e.preventDefault();
     if (!typed.trim()) return;
-    const userInput   = typed.trim().toLowerCase();
-    const fullAnswer  = card.front.trim().toLowerCase();
-    const shortAnswer = fullAnswer.split(' — ')[0].trim();
-    setCorrect(userInput === fullAnswer || userInput === shortAnswer);
+    const grade = gradeAnswer(typed, card.front);
+    setCorrect(grade !== false);
+    if (grade === 'typo') {
+      // Counts as correct for scheduling, but the spelling still gets practised.
+      setTypoPending(true); setRetypeValue(''); setRetypeError(false);
+    }
     setPhase('answered');
+  }
+
+  // Retype after a near-miss — unlocks the rating buttons, no rating attached yet
+  function handleTypoRetype(e) {
+    e.preventDefault();
+    if (retypeValue.trim().toLowerCase() === shortAnswerLower) {
+      setTypoPending(false); setRetypeError(false);
+    } else {
+      setRetypeError(true); setRetypeValue('');
+      setTimeout(() => retypeRef.current?.focus(), 50);
+    }
   }
 
   // ── Render ───────────────────────────────────────────────────────────────────
@@ -1338,6 +1479,32 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
               <button type="submit" disabled={!typed.trim()}
                 className="w-full py-3 bg-amber-500 hover:bg-amber-400 disabled:bg-gray-700 disabled:text-gray-500 text-gray-900 font-bold rounded-xl transition-colors">
                 Tarkista
+              </button>
+            </form>
+          ) : typoPending ? (
+            /* Near-miss: one character off. Correct for scheduling, rewrite required. */
+            <form onSubmit={handleTypoRetype} className="space-y-3">
+              <div className="bg-amber-500/10 border border-amber-500/40 rounded-xl px-5 py-4 text-center">
+                <span className="font-semibold text-amber-300">≈ Melkein oikein</span>
+                <span className="ml-2 text-amber-200/70">— kirjoitit: „{typed}"</span>
+                <p className="text-gray-400 text-sm mt-2">
+                  Oikea kirjoitusasu: <span className="text-white font-semibold">{shortAnswerDisplay}</span>
+                </p>
+              </div>
+              <p className="text-gray-400 text-sm text-center">✍️ Kirjoita se vielä oikein:</p>
+              <input
+                ref={retypeRef}
+                value={retypeValue}
+                onChange={e => { setRetypeValue(e.target.value); setRetypeError(false); }}
+                autoFocus
+                className={`w-full bg-gray-800 rounded-xl px-4 py-3 text-white text-lg focus:outline-none transition-colors ${retypeError ? 'border-2 border-red-500' : 'border border-gray-600 focus:border-amber-500'}`}
+                placeholder="Kirjoita englanninkielinen vastaus…"
+                autoComplete="off" spellCheck="false"
+              />
+              {retypeError && <p className="text-red-400 text-xs text-center">Ei täsmää — yritä uudelleen</p>}
+              <button type="submit" disabled={!retypeValue.trim()}
+                className="w-full py-3 bg-amber-500 hover:bg-amber-400 disabled:bg-gray-700 disabled:text-gray-500 text-gray-900 font-bold rounded-xl transition-colors">
+                Vahvista
               </button>
             </form>
           ) : pendingQuality !== null ? (
