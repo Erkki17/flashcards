@@ -197,6 +197,37 @@ async function dbDeleteReviewLog(id) {
   } catch(e) { console.error('dbDeleteReviewLog:', e.message); }
 }
 
+// ── Retention analysis ────────────────────────────────────────────────────────
+// "Mature" = the card had been held 21+ days when it came up. That is the
+// standard cut-off for real retention; counting young cards inflates the number
+// because you just saw them. Target band for mature retention is 85-90%:
+// below it the intervals are too long, above it you are reviewing more than needed.
+const MATURE_DAYS     = 21;
+const LEECH_THRESHOLD = 8;   // lapses before a card is flagged for a rewrite
+const EF_FLOOR_MARK   = 1.35; // cards at/below this are stuck near the 1.3 floor
+
+function isLeech(card) { return (card.lapses || 0) >= LEECH_THRESHOLD; }
+
+async function dbLoadRetention() {
+  const uid = await getUserId();
+  if (!uid) return null;
+  try {
+    // Only two small columns, and 'new' reviews excluded — a first sighting
+    // carries no retention information.
+    const rows = await apiFetch(
+      `/review_log?user_id=eq.${uid}&state=neq.new&select=rating,elapsed_days&limit=100000`
+    );
+    if (!rows) return null;
+    const acc = { mature: 0, matureOk: 0, young: 0, youngOk: 0, logged: rows.length };
+    for (const r of rows) {
+      const ok = r.rating >= 3;
+      if (r.elapsed_days >= MATURE_DAYS) { acc.mature++; if (ok) acc.matureOk++; }
+      else if (r.elapsed_days >= 1)      { acc.young++;  if (ok) acc.youngOk++;  }
+    }
+    return acc;
+  } catch(e) { console.error('dbLoadRetention:', e.message); return null; }
+}
+
 // ── Constants & preloaded data ────────────────────────────────────────────────
 
 const STORAGE_KEY   = 'flashcards_v1';
@@ -1832,9 +1863,12 @@ function DecksView({ cards, decks, setDecks }) {
 
 function ManageView({ cards, setCards, setEditCard, setView, decks }) {
   const [search, setSearch] = useState('');
+  const [leechOnly, setLeechOnly] = useState(false);
+  const leechCount = cards.filter(isLeech).length;
   const filtered = cards.filter(
-    c => c.front.toLowerCase().includes(search.toLowerCase()) ||
-         c.back.toLowerCase().includes(search.toLowerCase())
+    c => (c.front.toLowerCase().includes(search.toLowerCase()) ||
+          c.back.toLowerCase().includes(search.toLowerCase())) &&
+         (!leechOnly || isLeech(c))
   );
 
   function deleteCard(id) {
@@ -1858,6 +1892,16 @@ function ManageView({ cards, setCards, setEditCard, setView, decks }) {
       <input value={search} onChange={e => setSearch(e.target.value)}
         className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-amber-500 mb-4"
         placeholder="Hae kortteja…" />
+      {leechCount > 0 && (
+        <button onClick={() => setLeechOnly(v => !v)}
+          className={`mb-4 text-sm rounded-xl px-3 py-2 border transition-colors ${
+            leechOnly
+              ? 'bg-red-500/20 border-red-500/50 text-red-300'
+              : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-red-500/40 hover:text-red-300'
+          }`}>
+          🩹 Ongelmakortit ({leechCount}){leechOnly ? ' · näytä kaikki' : ''}
+        </button>
+      )}
       <div className="space-y-2">
         {filtered.map(card => {
           const { label, cls } = statusLabel(card);
@@ -1870,6 +1914,12 @@ function ManageView({ cards, setCards, setEditCard, setView, decks }) {
               </div>
               <div className="w-2 h-2 rounded-full shrink-0" style={{backgroundColor: getDeckColor(decks, card.deck)}} />
               <span className={`text-xs font-medium ${cls} shrink-0`}>{label}</span>
+              {isLeech(card) && (
+                <span className="text-xs font-medium text-red-300 bg-red-500/15 rounded px-1.5 py-0.5 shrink-0"
+                  title={`Väärin ${card.lapses} kertaa — harkitse kortin uudelleenkirjoitusta`}>
+                  🩹 {card.lapses}×
+                </span>
+              )}
               <select value={card.deck||'yleinen'}
                 onChange={e=>{
                   const updated=cards.map(c=>c.id===card.id?{...c,deck:e.target.value}:c);
@@ -1886,7 +1936,11 @@ function ManageView({ cards, setCards, setEditCard, setView, decks }) {
             </div>
           );
         })}
-        {filtered.length === 0 && <p className="text-gray-500 text-center py-8">Ei kortteja.</p>}
+        {filtered.length === 0 && (
+          <p className="text-gray-500 text-center py-8">
+            {leechOnly ? 'Ei ongelmakortteja hakuehdolla.' : 'Ei kortteja.'}
+          </p>
+        )}
       </div>
     </div>
   );
@@ -1933,9 +1987,11 @@ function Heatmap({ history }) {
 
 function StatsView({ cards, decks }) {
   const [history, setHistory] = useState(loadHistory);
+  const [retention, setRetention] = useState(null);
 
   useEffect(() => {
     dbLoadHistory().then(h => { if (h) { setHistory(h); localStorage.setItem(HISTORY_KEY, JSON.stringify(h)); } });
+    dbLoadRetention().then(setRetention);
   }, []);
 
   const total    = cards.length;
@@ -1951,9 +2007,95 @@ function StatsView({ cards, decks }) {
   const todayPct = today.reviewed > 0 ? Math.round(today.correct / today.reviewed * 100) + '%' : '–';
   const allTimeReviewed = Object.values(history).reduce((s,d)=>s+(d.reviewed||0),0);
 
+  // Ease-hell watch: how many cards are pinned near the 1.3 floor. Before the
+  // EF fix this only ever grew; it should now stay flat or shrink.
+  const atFloor = cards.filter(c => c.easeFactor <= EF_FLOOR_MARK).length;
+  const leeches = cards.filter(isLeech);
+  const pct = (ok, n) => n > 0 ? Math.round(ok / n * 100) : null;
+  const maturePct = retention ? pct(retention.matureOk, retention.mature) : null;
+  const youngPct  = retention ? pct(retention.youngOk,  retention.young)  : null;
+  // 85-90% is the target band; outside it the schedule needs adjusting.
+  const matureTone = maturePct == null ? 'text-gray-500'
+    : maturePct >= 85 && maturePct <= 92 ? 'text-green-400'
+    : maturePct < 85 ? 'text-red-400' : 'text-amber-400';
+
   return (
     <div className="max-w-3xl mx-auto px-4 py-8">
       <h2 className="text-xl font-bold text-amber-400 mb-6">Tilastot</h2>
+
+      {/* Memory health — the numbers that say whether the schedule is working */}
+      <div className="bg-gray-800 rounded-xl p-5 mb-4 border border-gray-700">
+        <div className="flex items-baseline justify-between mb-4">
+          <h3 className="text-white font-semibold">Muistin terveys</h3>
+          <span className="text-gray-600 text-xs">
+            {retention ? `${retention.logged} kirjattua kertausta` : 'ladataan…'}
+          </span>
+        </div>
+        <div className="grid grid-cols-3 gap-4">
+          <div>
+            <div className={`text-3xl font-bold ${matureTone}`}>{maturePct != null ? maturePct + '%' : '–'}</div>
+            <div className="text-gray-400 text-sm mt-1">Kypsät kortit</div>
+            <div className="text-gray-600 text-xs">
+              {retention && retention.mature > 0 ? `${retention.mature} kertausta · väli yli 21 pv` : 'ei vielä dataa'}
+            </div>
+          </div>
+          <div>
+            <div className="text-3xl font-bold text-white">{youngPct != null ? youngPct + '%' : '–'}</div>
+            <div className="text-gray-400 text-sm mt-1">Nuoret kortit</div>
+            <div className="text-gray-600 text-xs">
+              {retention && retention.young > 0 ? `${retention.young} kertausta · väli alle 21 pv` : 'ei vielä dataa'}
+            </div>
+          </div>
+          <div>
+            <div className={`text-3xl font-bold ${atFloor > 0 ? 'text-amber-400' : 'text-green-400'}`}>{atFloor}</div>
+            <div className="text-gray-400 text-sm mt-1">Kerroin pohjassa</div>
+            <div className="text-gray-600 text-xs">helppouskerroin ≤ {EF_FLOOR_MARK}</div>
+          </div>
+        </div>
+        {maturePct != null ? (
+          <div className="mt-5 pt-4 border-t border-gray-700">
+            <div className="relative h-2 bg-gray-700 rounded-full">
+              <div className="absolute inset-y-0 bg-green-500/40 rounded-full" style={{ left: '85%', width: '7%' }} />
+              <div className="absolute -top-1 w-1 h-4 bg-white rounded" style={{ left: `calc(${Math.min(100, maturePct)}% - 2px)` }} />
+            </div>
+            <div className="flex justify-between text-xs text-gray-600 mt-1.5">
+              <span>0 %</span><span className="text-green-500">tavoite 85–92 %</span><span>100 %</span>
+            </div>
+            <p className="text-xs mt-2.5 text-gray-500">
+              {maturePct < 85 ? 'Kertausvälit ovat liian pitkiä — ehdit unohtaa ennen kertausta.'
+               : maturePct > 92 ? 'Kertaat useammin kuin olisi tarpeen — välit voisivat olla pidempiä.'
+               : 'Kertausvälit ovat kohdallaan.'}
+            </p>
+          </div>
+        ) : (
+          <p className="text-gray-600 text-xs mt-4 pt-4 border-t border-gray-700">
+            Kypsiä kertauksia ei ole vielä kertynyt. Luku ilmestyy kun ensimmäiset kortit
+            ylittävät 21 päivän välin.
+          </p>
+        )}
+      </div>
+
+      {/* Leeches — repeated failure means the card is wrong, not the memory */}
+      {leeches.length > 0 && (
+        <div className="mb-4 bg-red-500/10 border border-red-500/30 rounded-xl p-5">
+          <p className="text-red-300 font-semibold">🩹 {leeches.length} ongelmakorttia</p>
+          <p className="text-gray-400 text-sm mt-1">
+            Nämä ovat menneet väärin vähintään {LEECH_THRESHOLD} kertaa. Toistuva epäonnistuminen
+            kertoo yleensä liian vaikeasta kortista, ei huonosta muistista — jaa kortti kahteen
+            tai kirjoita se selkeämmin.
+          </p>
+          <div className="flex flex-wrap gap-1.5 mt-3">
+            {leeches.slice(0, 8).map(c => (
+              <span key={c.id} className="text-xs bg-red-500/15 text-red-300 rounded px-2 py-1">
+                {c.front.split(' — ')[0]} · {c.lapses}×
+              </span>
+            ))}
+            {leeches.length > 8 && (
+              <span className="text-xs text-gray-500 px-2 py-1">+{leeches.length - 8} muuta</span>
+            )}
+          </div>
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-4 mb-4">
         <StatCard label="Kortteja yhteensä" value={total} />
         <StatCard label="Erääntynyt tänään" value={due} accent />
