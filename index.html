@@ -363,9 +363,40 @@ function newCard(front, back, example=null, deck='yleinen') {
 }
 
 // Progressive mode: determine effective direction based on card stage
+// Stage thresholds (consecutive-ish successes, since lapses only step back one)
+const STAGE2_AT = 3; // recognition -> production
+const STAGE3_AT = 6; // production  -> use in context (cloze)
+
+// Build a fill-in-the-blank from the card's example sentence.
+// Returns { sentence, answer } or null when the sentence doesn't contain a
+// usable form of the word. `front` may carry verb forms ("rise — rose / risen"),
+// so every form is tried; the matched form (e.g. "risen") becomes the answer,
+// because that is what actually fills the blank. Suffix is capped at 3 chars so
+// "be" can't match "because".
+function makeCloze(example, front) {
+  if (!example || !front) return null;
+  const forms = front.split(/\s*[—\/]\s*/).map(f => f.trim()).filter(f => f.length >= 2);
+  for (const form of forms) {
+    const esc = form.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re  = new RegExp(`\\b(${esc}\\w{0,3})\\b`, 'i');
+    const m   = example.match(re);
+    if (m) {
+      return {
+        answer:   m[1],
+        sentence: example.replace(re, '_'.repeat(Math.max(5, m[1].length))),
+      };
+    }
+  }
+  return null;
+}
+
+// Stage -> mode. Stage 3 is only reachable in auto mode and only when the
+// example sentence yields a cloze; otherwise the card keeps practising as stage 2.
 function getCardDirection(card, direction) {
-  if (direction === 'auto') return (card?.stage || 1) >= 2 ? 'fi-en' : 'en-fi';
-  return direction;
+  if (direction !== 'auto') return direction;
+  const stage = card?.stage || 1;
+  if (stage >= 3 && makeCloze(card.example, card.front)) return 'cloze';
+  return stage >= 2 ? 'fi-en' : 'en-fi';
 }
 
 // Ease-factor deltas per button. The original SM-2 formula gives q=4 a delta of
@@ -598,7 +629,7 @@ function saveAchievements(a) { localStorage.setItem(ACHIEVE_KEY, JSON.stringify(
 function computeAchieveValues(cards,history,streakData,sessionCards) {
   const totalReviewed=Object.values(history).reduce((s,d)=>s+(d.reviewed||0),0);
   const financeMastered=cards.filter(c=>FINANCE_FRONTS.has(c.front.toLowerCase())&&c.repetitions>=3).length;
-  const stage2=cards.filter(c=>c.stage===2).length;
+  const stage2=cards.filter(c=>(c.stage||1)>=2).length;
   const level=getLevelIdx(loadXP())+1;
   return {
     cards_reviewed: totalReviewed,
@@ -808,6 +839,7 @@ function HomeView({ cards, setView, direction, setDirection, decks, onStudyDeck,
   const total  = cards.length;
   const stage1 = cards.filter(c => (c.stage || 1) === 1).length;
   const stage2 = cards.filter(c => c.stage === 2).length;
+  const stage3 = cards.filter(c => (c.stage || 1) >= 3).length;
   const [showDecks, setShowDecks] = React.useState(false);
   return (
     <div className="max-w-3xl mx-auto px-4 py-10">
@@ -821,11 +853,14 @@ function HomeView({ cards, setView, direction, setDirection, decks, onStudyDeck,
           <p className="text-gray-600 text-xs mt-1.5 text-right">opiskelusuunta</p>
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-4 mt-8 mb-8">
+      <div className="grid grid-cols-2 gap-4 mt-8 mb-4">
         <StatCard label="Erääntynyt tänään" value={due} accent />
         <StatCard label="Kortteja yhteensä" value={total} />
+      </div>
+      <div className="grid grid-cols-3 gap-4 mb-8">
         <StatCard label="🔍 Tunnistus (V1)" value={stage1} hint="EN→FI · kääntäminen" />
         <StatCard label="✍️ Tuotto (V2)"    value={stage2} hint="FI→EN · kirjoittaminen" />
+        <StatCard label="📝 Käyttö (V3)"    value={stage3} hint="lauseyhteys · aukkotehtävä" />
       </div>
       {/* Streak progress */}
       {(() => {
@@ -1098,7 +1133,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
   const [typed,        setTyped]        = useState('');
   const [correct,      setCorrect]      = useState(null);
   const [hintShown,    setHintShown]    = useState(false);
-  const [graduated,    setGraduated]    = useState(false);
+  const [graduated,    setGraduated]    = useState(null); // toast text, or null
   const [sessionXP,    setSessionXP]    = useState(0);
   const [sessionCards, setSessionCards] = useState(0);
   const [levelUp,      setLevelUp]      = useState(null);
@@ -1123,6 +1158,8 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
   const card         = liveQueue[0];
   const effectiveDir = card ? getCardDirection(card, direction) : 'en-fi';
   const isFiEn       = effectiveDir === 'fi-en';
+  const isCloze      = effectiveDir === 'cloze';
+  const isTyping     = isFiEn || isCloze;   // both modes share the typing UI
   const uniqueInLive = new Set(liveQueue.map(c => c.id)).size;
   const totalUnique  = doneIds.size + uniqueInLive;
   const progressPct  = totalUnique > 0 ? Math.round(doneIds.size / totalUnique * 100) : 0;
@@ -1164,15 +1201,15 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
   }, [card?.id, direction]);
 
   useEffect(() => {
-    if (isFiEn && phase === 'question') inputRef.current?.focus();
-  }, [card?.id, phase, isFiEn]);
+    if (isTyping && phase === 'question') inputRef.current?.focus();
+  }, [card?.id, phase, isTyping]);
 
   useEffect(() => {
     function onKey(e) {
       if (showQuit) return;
       const tag = document.activeElement?.tagName;
       const inInput = tag === 'BUTTON' || tag === 'INPUT' || tag === 'TEXTAREA';
-      if (!isFiEn && !inInput) {
+      if (!isTyping && !inInput) {
         if (e.key === 'ArrowUp') {
           e.preventDefault(); setPhase(p => p === 'question' ? 'answered' : 'question'); return;
         }
@@ -1188,7 +1225,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [isFiEn, phase, showQuit]);
+  }, [isTyping, phase, showQuit]);
 
   // ── Session complete (all cards rated Oikein) ────────────────────────────────
   if (liveQueue.length === 0) {
@@ -1206,12 +1243,15 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
 
   if (!card) return null;
 
+  const cloze        = isCloze ? makeCloze(card.example, card.front) : null;
   const promptText   = isFiEn ? card.back  : card.front;
   const answerText   = isFiEn ? card.front : card.back;
   const parsedPrompt = parseBack(promptText);
   const parsedAnswer = parseBack(answerText);
-  const cardStage         = card.stage || 1;
-  const shortAnswerDisplay = card.front.split(' — ')[0].trim();
+  const cardStage    = card.stage || 1;
+  // What the learner has to type: the matched sentence form for cloze
+  // (e.g. "risen"), otherwise the headword before any " — ".
+  const shortAnswerDisplay = cloze ? cloze.answer : card.front.split(' — ')[0].trim();
   const shortAnswerLower   = shortAnswerDisplay.toLowerCase();
 
   // Arrow-key rating allowed only when rating buttons are visible (no pending retype)
@@ -1265,10 +1305,16 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
 
     let updated = sm2(card, quality);
     updated = { ...updated, stage: cardStage };
-    if (cardStage === 1 && updated.repetitions >= 3) {
+    if (cardStage === 1 && updated.repetitions >= STAGE2_AT) {
       updated = { ...updated, stage: 2 };
-      setGraduated(true);
-      setTimeout(() => setGraduated(false), 4000);
+      setGraduated('🎉 Sana siirtyy tuottovaiheeseen!');
+      setTimeout(() => setGraduated(null), 4000);
+    } else if (cardStage === 2 && updated.repetitions >= STAGE3_AT && makeCloze(card.example, card.front)) {
+      // Only cards whose example sentence yields a cloze move on; the rest
+      // keep practising production, which is still the right task for them.
+      updated = { ...updated, stage: 3 };
+      setGraduated('🎉 Sana siirtyy käyttövaiheeseen — nyt lauseyhteydessä!');
+      setTimeout(() => setGraduated(null), 4000);
     }
     const newCards = cards.map(c => c.id === updated.id ? updated : c);
     setCards(newCards); saveCards(newCards);
@@ -1359,7 +1405,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
   function checkAnswer(e) {
     e.preventDefault();
     if (!typed.trim()) return;
-    const grade = gradeAnswer(typed, card.front);
+    const grade = gradeAnswer(typed, cloze ? cloze.answer : card.front);
     setCorrect(grade !== false);
     if (grade === 'typo') {
       // Counts as correct for scheduling, but the spelling still gets practised.
@@ -1407,7 +1453,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
       )}
 
       {/* Toasts */}
-      {graduated   && <div className="mb-4 bg-amber-500/15 border border-amber-400/40 rounded-xl px-4 py-3 text-center text-amber-300 font-medium animate-pulse">🎉 Sana siirtyy tuottovaiheeseen!</div>}
+      {graduated   && <div className="mb-4 bg-amber-500/15 border border-amber-400/40 rounded-xl px-4 py-3 text-center text-amber-300 font-medium animate-pulse">{graduated}</div>}
       {levelUp     && <div className="mb-4 bg-purple-500/15 border border-purple-400/40 rounded-xl px-4 py-3 text-center text-purple-300 font-medium">⬆️ Uusi taso: {levelUp}!</div>}
       {streakToast && <div className="mb-4 bg-amber-500/15 border border-amber-400/40 rounded-xl px-4 py-3 text-center text-amber-300 font-medium">{streakToast}</div>}
       {/* Floating toasts — fixed position so they never shift the card layout */}
@@ -1447,9 +1493,10 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
           <span className="text-gray-700">|</span>
           <span className="text-gray-400 text-xs">✓ {doneIds.size} / {totalUnique}</span>
           <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-            cardStage === 2 ? 'bg-purple-500/20 text-purple-300' : 'bg-blue-500/20 text-blue-300'
+            cardStage >= 3 ? 'bg-emerald-500/20 text-emerald-300'
+            : cardStage === 2 ? 'bg-purple-500/20 text-purple-300' : 'bg-blue-500/20 text-blue-300'
           }`}>
-            {cardStage === 2 ? '✍️ Tuotto' : '🔍 Tunnistus'}
+            {cardStage >= 3 ? '📝 Käyttö' : cardStage === 2 ? '✍️ Tuotto' : '🔍 Tunnistus'}
           </span>
           {decks && card && (() => {
             const d = decks.find(dk => dk.id === (card.deck || 'yleinen'));
@@ -1475,12 +1522,23 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
           style={{ width: `${progressPct}%` }} />
       </div>
 
-      {isFiEn ? (
+      {isTyping ? (
         <>
           <div className="bg-gray-800 rounded-2xl p-8 mb-6 border border-gray-700 min-h-[150px] flex flex-col items-center justify-center gap-3">
-            <p className="text-xl text-amber-200 text-center leading-relaxed">{parsedPrompt.main}</p>
-            <button onClick={() => speak(answerText)} className="text-gray-500 hover:text-amber-400 text-xl transition-colors" title="Kuuntele">🔊</button>
-            {parsedPrompt.hint && (hintShown
+            {cloze ? (
+              <>
+                <p className="text-gray-500 text-xs uppercase tracking-wider">Täydennä lause</p>
+                <p className="text-xl text-white text-center leading-relaxed font-mono">{cloze.sentence}</p>
+                <p className="text-amber-200/80 text-base text-center">{parseBack(card.back).main}</p>
+                <button onClick={() => speak(card.example)} className="text-gray-500 hover:text-amber-400 text-xl transition-colors" title="Kuuntele lause">🔊</button>
+              </>
+            ) : (
+              <>
+                <p className="text-xl text-amber-200 text-center leading-relaxed">{parsedPrompt.main}</p>
+                <button onClick={() => speak(answerText)} className="text-gray-500 hover:text-amber-400 text-xl transition-colors" title="Kuuntele">🔊</button>
+              </>
+            )}
+            {!cloze && parsedPrompt.hint && (hintShown
               ? <p className="text-gray-400 text-sm text-center italic">{parsedPrompt.hint}</p>
               : <button onClick={() => { setHintShown(true); inputRef.current?.focus(); }}
                   className="text-gray-500 text-xs border border-gray-700 hover:border-amber-500/50 hover:text-amber-400 rounded-lg px-3 py-1.5 transition-colors">
@@ -1542,8 +1600,18 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
             /* Retype reinforcement — shown after pressing Vaikea or Uudestaan */
             <form onSubmit={handleRetype} className="space-y-3">
               <div className="bg-gray-800 border border-gray-700 rounded-2xl p-6 text-center">
-                <p className="text-gray-400 text-xs mb-2">Kirjoita englanniksi:</p>
-                <p className="text-xl text-amber-200 font-medium">{parsedPrompt.main}</p>
+                {cloze ? (
+                  /* The blanked sentence is still visible just above — don't repeat it */
+                  <>
+                    <p className="text-gray-400 text-xs mb-1">Kirjoita puuttuva sana:</p>
+                    <p className="text-lg text-amber-200 font-medium">{parseBack(card.back).main}</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-gray-400 text-xs mb-2">Kirjoita englanniksi:</p>
+                    <p className="text-xl text-amber-200 font-medium">{parsedPrompt.main}</p>
+                  </>
+                )}
               </div>
               <input
                 ref={retypeRef}
@@ -1581,7 +1649,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
                   </div>
                   <div className="bg-gray-800 border border-gray-700 rounded-xl px-5 py-3 text-center">
                     <span className="text-gray-400 text-sm">Oikea vastaus: </span>
-                    <span className="text-white font-semibold">{answerText}</span>
+                    <span className="text-white font-semibold">{cloze ? cloze.answer : answerText}</span>
                   </div>
                 </div>
               )}
@@ -1880,6 +1948,7 @@ function ManageView({ cards, setCards, setEditCard, setView, decks }) {
 
   function statusLabel(card) {
     const stage = card.stage || 1;
+    if (stage >= 3) return { label: '📝 V3', cls: 'text-emerald-400' };
     if (stage === 2) return { label: '✍️ V2', cls: 'text-purple-400' };
     if (card.repetitions === 0) return { label: '🔍 V1 · Uusi',      cls: 'text-blue-400' };
     if (card.repetitions >= 3)  return { label: '🔍 V1 · Valmis',    cls: 'text-amber-400' };
