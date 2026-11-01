@@ -243,12 +243,30 @@ const LAST_DECK_KEY = 'flashcards_last_deck';
 const FIRST_KEY         = 'flashcards_first_launch';
 const SAVED_SESSION_KEY = 'flashcards_session_v1';
 
+// Target languages. A deck carries one; everything language-specific (voice,
+// labels, the accent keys under the answer box) is read from here.
+const LANGS = {
+  en: { tts: 'en-US', code: 'EN', name: 'englanti', adj: 'englanninkielinen', ess: 'englanniksi', accents: [] },
+  es: { tts: 'es-ES', code: 'ES', name: 'espanja',  adj: 'espanjankielinen',  ess: 'espanjaksi',
+        accents: ['á', 'é', 'í', 'ó', 'ú', 'ñ', 'ü', '¿', '¡'] },
+};
+function deckLang(decks, deckId) {
+  const d = (decks || []).find(x => x.id === (deckId || 'yleinen'));
+  return (d && LANGS[d.lang]) ? d.lang : 'en';
+}
+
+// Kept out of the smart mix by default: two languages interleaved early on
+// invite cross-language interference. Toggle per deck in Pakat.
+const SPANISH_DECK = { id:'espanja', name:'🇪🇸 Espanja', color:'#E11D48', lang:'es', smart:false };
+const DECKS_ES_KEY = 'flashcards_decks_es_v1';
+
 const DEFAULT_DECKS = [
   { id:'rahoitus',    name:'🏦 Rahoitus',    color:'#F59E0B' },
   { id:'kurssikirja', name:'📚 Kurssikirja', color:'#3B82F6' },
   { id:'matkailu',    name:'✈️ Matkailu',    color:'#10B981' },
   { id:'akateeminen', name:'📝 Akateeminen', color:'#8B5CF6' },
   { id:'kielioppi',   name:'🔤 Kielioppi',   color:'#EF4444' },
+  SPANISH_DECK,
   { id:'yleinen',     name:'📦 Yleinen',      color:'#6B7280' },
 ];
 const DAILY_GOAL  = 50;
@@ -378,7 +396,7 @@ function makeCloze(example, front) {
   const forms = front.split(/\s*[—\/]\s*/).map(f => f.trim()).filter(f => f.length >= 2);
   for (const form of forms) {
     const esc = form.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const re  = new RegExp(`\\b(${esc}\\w{0,3})\\b`, 'i');
+    const re  = new RegExp(`(?<![\\p{L}\\p{N}])(${esc}\\p{L}{0,3})(?![\\p{L}\\p{N}])`, 'iu');
     const m   = example.match(re);
     if (m) {
       return {
@@ -461,15 +479,24 @@ function editDistance(a, b) {
   return dp[a.length][b.length];
 }
 
-// 'exact' | 'typo' | false. A one-character slip on a word of 5+ letters counts
-// as correct for scheduling, but the UI still asks for a rewrite.
+const stripAccents = str => str.normalize('NFD').replace(/[̀-ͯ]/g, '');
+
+// 'exact' | 'accent' | 'typo' | false. Both near-misses count as correct for
+// scheduling, but the UI shows the right spelling and asks for a rewrite.
+// 'accent' = right letters, missing or wrong diacritics (esta / está, ano / año).
+// Without it every short Spanish word typed on a Finnish keyboard failed outright,
+// because typo tolerance only starts at five letters.
 function gradeAnswer(input, answerField) {
   const user  = input.trim().toLowerCase();
   const full  = answerField.trim().toLowerCase();
   const short = full.split(' — ')[0].trim();
   if (user === full || user === short) return 'exact';
+  const bare = stripAccents(user);
   for (const target of [full, short]) {
-    if (target.length >= 5 && editDistance(user, target) <= 1) return 'typo';
+    if (bare === stripAccents(target)) return 'accent';
+  }
+  for (const target of [full, short]) {
+    if (target.length >= 5 && editDistance(bare, stripAccents(target)) <= 1) return 'typo';
   }
   return false;
 }
@@ -581,8 +608,19 @@ function dateStr(offsetDays=0) {
 
 // Deck helpers
 function loadDecks() {
-  try { return JSON.parse(localStorage.getItem(DECKS_KEY)||'null') || DEFAULT_DECKS; }
-  catch { return DEFAULT_DECKS; }
+  let decks;
+  try { decks = JSON.parse(localStorage.getItem(DECKS_KEY)||'null') || DEFAULT_DECKS; }
+  catch { decks = DEFAULT_DECKS; }
+  if (!localStorage.getItem(DECKS_ES_KEY)) {
+    if (!decks.some(d => d.id === SPANISH_DECK.id)) {
+      const i = decks.findIndex(d => d.id === 'yleinen');
+      decks = i === -1 ? [...decks, SPANISH_DECK]
+                       : [...decks.slice(0, i), SPANISH_DECK, ...decks.slice(i)];
+    }
+    localStorage.setItem(DECKS_ES_KEY, '1');
+    localStorage.setItem(DECKS_KEY, JSON.stringify(decks));
+  }
+  return decks;
 }
 function saveDecks(d) { localStorage.setItem(DECKS_KEY, JSON.stringify(d)); }
 function loadLastDeck() { return localStorage.getItem(LAST_DECK_KEY)||'yleinen'; }
@@ -698,11 +736,16 @@ function smartSort(dueCards) {
 }
 
 // Audio pronunciation
-function speak(text) {
-  if(!window.speechSynthesis) return;
+function speak(text, lang = 'en') {
+  if(!window.speechSynthesis || !text) return;
   window.speechSynthesis.cancel();
-  const utter=new SpeechSynthesisUtterance(text.split(' — ')[0].split(' — ')[0].split('—')[0].trim());
-  utter.lang='en-US'; utter.rate=0.9;
+  const tts = (LANGS[lang] || LANGS.en).tts;
+  const utter=new SpeechSynthesisUtterance(text.split(' — ')[0].split('—')[0].trim());
+  utter.lang=tts; utter.rate=0.9;
+  const voices = window.speechSynthesis.getVoices();
+  const voice = voices.find(v => v.lang.replace('_','-') === tts)
+             || voices.find(v => v.lang.toLowerCase().startsWith(tts.slice(0,2)));
+  if (voice) utter.voice = voice;
   window.speechSynthesis.speak(utter);
 }
 
@@ -778,11 +821,11 @@ function AuthView() {
 
 // ── Direction toggle ──────────────────────────────────────────────────────────
 
-function DirectionToggle({ direction, setDirection }) {
+function DirectionToggle({ direction, setDirection, code = 'EN' }) {
   const opts = [
     { val: 'auto',  label: 'Auto'   },
-    { val: 'en-fi', label: 'EN→FI'  },
-    { val: 'fi-en', label: 'FI→EN'  },
+    { val: 'en-fi', label: `${code}→FI` },
+    { val: 'fi-en', label: `FI→${code}` },
     { val: 'listen', label: '🔊'     },
   ];
   function select(val) { setDirection(val); saveDirection(val); }
@@ -867,8 +910,8 @@ function HomeView({ cards, setView, direction, setDirection, decks, onStudyDeck,
         <StatCard label="Kortteja yhteensä" value={total} />
       </div>
       <div className="grid grid-cols-3 gap-4 mb-8">
-        <StatCard label="🔍 Tunnistus (V1)" value={stage1} hint="EN→FI · kääntäminen" />
-        <StatCard label="✍️ Tuotto (V2)"    value={stage2} hint="FI→EN · kirjoittaminen" />
+        <StatCard label="🔍 Tunnistus (V1)" value={stage1} hint="vieras kieli → suomi" />
+        <StatCard label="✍️ Tuotto (V2)"    value={stage2} hint="suomi → vieras kieli, kirjoittaen" />
         <StatCard label="📝 Käyttö (V3)"    value={stage3} hint="lauseyhteys · aukkotehtävä" />
       </div>
       {/* Streak progress */}
@@ -1115,7 +1158,41 @@ function RatingButtons({ onRate }) {
   );
 }
 
+// Tap-to-insert keys for letters a Finnish keyboard makes awkward (ñ, ¿ …).
+// Inserts at the caret and hands focus straight back to the input.
+function AccentBar({ chars, inputRef, value, setValue }) {
+  if (!chars || chars.length === 0) return null;
+  function insert(ch) {
+    const el = inputRef.current;
+    const start = el?.selectionStart ?? value.length;
+    const end   = el?.selectionEnd   ?? value.length;
+    setValue(value.slice(0, start) + ch + value.slice(end));
+    requestAnimationFrame(() => { if (el) { el.focus(); el.setSelectionRange(start + 1, start + 1); } });
+  }
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {chars.map(ch => (
+        <button key={ch} type="button" tabIndex={-1}
+          onMouseDown={e => e.preventDefault()}
+          onClick={() => insert(ch)}
+          className="w-9 h-9 rounded-lg bg-gray-800 border border-gray-700 hover:border-amber-500/60 hover:text-amber-300 text-gray-300 transition-colors">
+          {ch}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck, studyMode, decks, savedSession }) {
+  // Which cards this session draws from. Declared before the queue state below,
+  // whose initialiser uses it. Smart mode skips decks opted out of the mix.
+  const nonSmartDecks = new Set((decks || []).filter(d => d.smart === false).map(d => d.id));
+  function inScope(c) {
+    if (studyDeck != null)     return c.deck === studyDeck;
+    if (studyMode === 'smart') return !nonSmartDecks.has(c.deck || 'yleinen');
+    return true;
+  }
+
   // ── Queue state ──────────────────────────────────────────────────────────────
   const [liveQueue,    setLiveQueue]    = useState(() => {
     if (savedSession) {
@@ -1127,8 +1204,8 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
       const fresh = restored.filter(c => !seenSet.has(c.id));
       return [...inProgress, ...fresh];
     }
-    if (studyMode === 'smart') return smartSort(cards.filter(isDue));
-    return cards.filter(c => isDue(c) && (studyDeck == null || c.deck === studyDeck));
+    if (studyMode === 'smart') return smartSort(cards.filter(c => isDue(c) && inScope(c)));
+    return cards.filter(c => isDue(c) && inScope(c));
   });
   const [doneIds,      setDoneIds]      = useState(() =>
     savedSession ? new Set(savedSession.doneIds || []) : new Set()
@@ -1155,7 +1232,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
   const [retypeValue,     setRetypeValue]     = useState('');
   const [retypeError,     setRetypeError]     = useState(false);
   const [pendingQuality,  setPendingQuality]  = useState(null); // set when Vaikea/Uudestaan chosen, triggers retype
-  const [typoPending,     setTypoPending]     = useState(false); // near-miss: counts as correct, still must be rewritten
+  const [typoPending,     setTypoPending]     = useState(false); // false | 'typo' | 'accent' — near-miss, must be rewritten
   const inputRef    = useRef(null);
   const retypeRef   = useRef(null);
   const rateRef     = useRef(null);
@@ -1171,14 +1248,15 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
   const isFiEn       = effectiveDir === 'fi-en';
   const isCloze      = effectiveDir === 'cloze';
   const isListen     = effectiveDir === 'listen';
+  const lang         = card ? deckLang(decks, card.deck) : 'en';
+  const L            = LANGS[lang];
   const isTyping     = isFiEn || isCloze || isListen;  // these share the typing UI
   const uniqueInLive = new Set(liveQueue.map(c => c.id)).size;
   const totalUnique  = doneIds.size + uniqueInLive;
   const progressPct  = totalUnique > 0 ? Math.round(doneIds.size / totalUnique * 100) : 0;
   const liveIds      = new Set(liveQueue.map(c => c.id));
   const unseenCount  = cards.filter(c =>
-    (studyDeck == null || c.deck === studyDeck) &&
-    !doneIds.has(c.id) && !liveIds.has(c.id)
+    inScope(c) && !doneIds.has(c.id) && !liveIds.has(c.id)
   ).length;
 
   // ── Auto-inject helper (fires when queue < 20 total cards) ───────────────────
@@ -1205,8 +1283,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
     if (want === 0) return { queue, added: 0 };
     const ids = new Set(queue.map(c => c.id));
     const eligible = cards.filter(c =>
-      (studyDeck == null || c.deck === studyDeck) &&
-      !done.has(c.id) && !ids.has(c.id)
+      inScope(c) && !done.has(c.id) && !ids.has(c.id)
     );
     if (eligible.length === 0) return { queue, added: 0 };
     const toAdd = eligible.slice(0, want);
@@ -1239,9 +1316,9 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
   // without a click. Short delay lets the card mount first.
   useEffect(() => {
     if (!isListen || phase !== 'question' || !card) return;
-    const t = setTimeout(() => speak(card.front.split(' — ')[0].trim()), 220);
+    const t = setTimeout(() => speak(card.front.split(' — ')[0].trim(), lang), 220);
     return () => clearTimeout(t);
-  }, [card?.id, isListen, phase]);
+  }, [card?.id, isListen, phase, lang]);
 
   useEffect(() => {
     function onKey(e) {
@@ -1421,7 +1498,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
   }
 
   rateRef.current = rate;
-  replayRef.current = () => speak(shortAnswerDisplay);
+  replayRef.current = () => speak(shortAnswerDisplay, lang);
 
   // Called when Vaikea or Uudestaan is pressed in FI→EN mode — triggers retype first
   function handleFiEnRate(quality) {
@@ -1452,9 +1529,9 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
     if (!typed.trim()) return;
     const grade = gradeAnswer(typed, cloze ? cloze.answer : card.front);
     setCorrect(grade !== false);
-    if (grade === 'typo') {
+    if (grade === 'typo' || grade === 'accent') {
       // Counts as correct for scheduling, but the spelling still gets practised.
-      setTypoPending(true); setRetypeValue(''); setRetypeError(false);
+      setTypoPending(grade); setRetypeValue(''); setRetypeError(false);
     }
     setPhase('answered');
   }
@@ -1553,7 +1630,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
             ) : null;
           })()}
         </div>
-        <DirectionToggle direction={direction} setDirection={setDirection} />
+        <DirectionToggle direction={direction} setDirection={setDirection} code={L.code} />
       </div>
 
       {/* Queue status */}
@@ -1574,7 +1651,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
               /* Listening card: the word is only ever heard, never shown */
               <>
                 <p className="text-gray-500 text-xs uppercase tracking-wider">Kuuntele ja kirjoita</p>
-                <button type="button" onClick={() => speak(shortAnswerDisplay)}
+                <button type="button" onClick={() => speak(shortAnswerDisplay, lang)}
                   className="w-20 h-20 rounded-full bg-amber-500/15 border-2 border-amber-500/40 hover:bg-amber-500/25 hover:border-amber-400 text-4xl transition-colors flex items-center justify-center"
                   title="Toista (Ctrl+välilyönti)">
                   🔊
@@ -1586,12 +1663,12 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
                 <p className="text-gray-500 text-xs uppercase tracking-wider">Täydennä lause</p>
                 <p className="text-xl text-white text-center leading-relaxed font-mono">{cloze.sentence}</p>
                 <p className="text-amber-200/80 text-base text-center">{parseBack(card.back).main}</p>
-                <button onClick={() => speak(card.example)} className="text-gray-500 hover:text-amber-400 text-xl transition-colors" title="Kuuntele lause">🔊</button>
+                <button onClick={() => speak(card.example, lang)} className="text-gray-500 hover:text-amber-400 text-xl transition-colors" title="Kuuntele lause">🔊</button>
               </>
             ) : (
               <>
                 <p className="text-xl text-amber-200 text-center leading-relaxed">{parsedPrompt.main}</p>
-                <button onClick={() => speak(answerText)} className="text-gray-500 hover:text-amber-400 text-xl transition-colors" title="Kuuntele">🔊</button>
+                <button onClick={() => speak(answerText, lang)} className="text-gray-500 hover:text-amber-400 text-xl transition-colors" title="Kuuntele">🔊</button>
               </>
             )}
             {isListen && (hintShown
@@ -1613,7 +1690,8 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
             <form onSubmit={checkAnswer} className="space-y-3">
               <input ref={inputRef} value={typed} onChange={e => setTyped(e.target.value)}
                 className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white text-lg focus:outline-none focus:border-amber-500 transition-colors"
-                placeholder="Kirjoita englanninkielinen vastaus…" autoComplete="off" spellCheck="false" />
+                placeholder={`Kirjoita ${L.adj} vastaus…`} autoComplete="off" spellCheck="false" />
+              <AccentBar chars={L.accents} inputRef={inputRef} value={typed} setValue={setTyped} />
               {/* Letter hint row */}
               <div className="flex items-center gap-3">
                 <button type="button"
@@ -1637,7 +1715,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
             /* Near-miss: one character off. Correct for scheduling, rewrite required. */
             <form onSubmit={handleTypoRetype} className="space-y-3">
               <div className="bg-amber-500/10 border border-amber-500/40 rounded-xl px-5 py-4 text-center">
-                <span className="font-semibold text-amber-300">≈ Melkein oikein</span>
+                <span className="font-semibold text-amber-300">{typoPending === 'accent' ? '≈ Tarkista aksentit' : '≈ Melkein oikein'}</span>
                 <span className="ml-2 text-amber-200/70">— kirjoitit: „{typed}"</span>
                 <p className="text-gray-400 text-sm mt-2">
                   Oikea kirjoitusasu: <span className="text-white font-semibold">{shortAnswerDisplay}</span>
@@ -1650,9 +1728,10 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
                 onChange={e => { setRetypeValue(e.target.value); setRetypeError(false); }}
                 autoFocus
                 className={`w-full bg-gray-800 rounded-xl px-4 py-3 text-white text-lg focus:outline-none transition-colors ${retypeError ? 'border-2 border-red-500' : 'border border-gray-600 focus:border-amber-500'}`}
-                placeholder="Kirjoita englanninkielinen vastaus…"
+                placeholder={`Kirjoita ${L.adj} vastaus…`}
                 autoComplete="off" spellCheck="false"
               />
+              <AccentBar chars={L.accents} inputRef={retypeRef} value={retypeValue} setValue={setRetypeValue} />
               {retypeError && <p className="text-red-400 text-xs text-center">Ei täsmää — yritä uudelleen</p>}
               <button type="submit" disabled={!retypeValue.trim()}
                 className="w-full py-3 bg-amber-500 hover:bg-amber-400 disabled:bg-gray-700 disabled:text-gray-500 text-gray-900 font-bold rounded-xl transition-colors">
@@ -1671,7 +1750,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
                   </>
                 ) : (
                   <>
-                    <p className="text-gray-400 text-xs mb-2">Kirjoita englanniksi:</p>
+                    <p className="text-gray-400 text-xs mb-2">Kirjoita {L.ess}:</p>
                     <p className="text-xl text-amber-200 font-medium">{parsedPrompt.main}</p>
                   </>
                 )}
@@ -1681,9 +1760,10 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
                 value={retypeValue}
                 onChange={e => { setRetypeValue(e.target.value); setRetypeError(false); }}
                 className={`w-full bg-gray-800 rounded-xl px-4 py-3 text-white text-lg focus:outline-none transition-colors ${retypeError ? 'border-2 border-red-500' : 'border border-gray-600 focus:border-amber-500'}`}
-                placeholder="Kirjoita englanninkielinen vastaus…"
+                placeholder={`Kirjoita ${L.adj} vastaus…`}
                 autoComplete="off" spellCheck="false"
               />
+              <AccentBar chars={L.accents} inputRef={retypeRef} value={retypeValue} setValue={setRetypeValue} />
               {retypeError && <p className="text-red-400 text-xs text-center">Ei täsmää — yritä uudelleen</p>}
               <button type="submit" disabled={!retypeValue.trim()}
                 className="w-full py-3 bg-amber-500 hover:bg-amber-400 disabled:bg-gray-700 disabled:text-gray-500 text-gray-900 font-bold rounded-xl transition-colors">
@@ -1730,7 +1810,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
               <div className="flip-front absolute inset-0 bg-gray-800 rounded-2xl flex flex-col items-center justify-center p-8 cursor-pointer border border-gray-700 hover:border-amber-500/50 transition-colors"
                 onClick={() => setPhase('answered')}>
                 <p className="text-2xl font-semibold text-white text-center">{parsedPrompt.main}</p>
-                <button onClick={e => { e.stopPropagation(); speak(promptText); }} className="text-gray-500 hover:text-amber-400 text-xl transition-colors mt-2" title="Kuuntele">🔊</button>
+                <button onClick={e => { e.stopPropagation(); speak(promptText, lang); }} className="text-gray-500 hover:text-amber-400 text-xl transition-colors mt-2" title="Kuuntele">🔊</button>
                 {phase === 'question' && <p className="text-gray-500 text-sm mt-4">Klikkaa tai paina ↑ / Enter</p>}
               </div>
               <div className="flip-back absolute inset-0 bg-gray-800 rounded-2xl flex flex-col items-center justify-center gap-3 p-8 border border-amber-500/30 cursor-pointer hover:border-amber-400/50 transition-colors"
@@ -1802,13 +1882,13 @@ function AddCardView({ cards, setCards, editCard, setEditCard, decks }) {
       </h2>
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label className="block text-gray-400 text-sm mb-1">Etupuoli</label>
+          <label className="block text-gray-400 text-sm mb-1">Etupuoli <span className="text-gray-600">— {LANGS[deckLang(decks, deck)].name}</span></label>
           <input value={front} onChange={e => setFront(e.target.value)}
             className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-amber-500"
             placeholder="Sana tai kysymys" />
         </div>
         <div>
-          <label className="block text-gray-400 text-sm mb-1">Takapuoli</label>
+          <label className="block text-gray-400 text-sm mb-1">Takapuoli <span className="text-gray-600">— suomi</span></label>
           <textarea value={back} onChange={e => setBack(e.target.value)} rows={3}
             className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-amber-500 resize-none"
             placeholder="Vastaus tai käännös" />
@@ -1817,7 +1897,7 @@ function AddCardView({ cards, setCards, editCard, setEditCard, decks }) {
           <label className="block text-gray-400 text-sm mb-1">Esimerkkilause <span className="text-gray-600">(valinnainen)</span></label>
           <input value={example} onChange={e => setExample(e.target.value)}
             className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-amber-500"
-            placeholder="Esim. She sold her portfolio before the crash." />
+            placeholder={deckLang(decks, deck) === 'es' ? 'Esim. El banco subió los tipos de interés.' : 'Esim. She sold her portfolio before the crash.'} />
         </div>
         <div>
           <label className="block text-gray-400 text-sm mb-1">Pakka</label>
@@ -1897,6 +1977,7 @@ function ImportView({ cards, setCards, decks }) {
 
 function DecksView({ cards, decks, setDecks }) {
   const [newName, setNewName] = useState('');
+  const [newLang, setNewLang] = useState('en');
   const [editId,  setEditId]  = useState(null);
   const [editName,setEditName]= useState('');
 
@@ -1906,9 +1987,15 @@ function DecksView({ cards, decks, setDecks }) {
     const id = name.toLowerCase().replace(/[^a-z0-9]/g,'_') + '_' + Date.now();
     const colors = ['#F59E0B','#3B82F6','#10B981','#8B5CF6','#EF4444','#EC4899','#14B8A6'];
     const color = colors[decks.length % colors.length];
-    const updated = [...decks, { id, name, color }];
+    // A non-English deck starts outside the smart mix, like Spanish does.
+    const updated = [...decks, { id, name, color, lang: newLang, smart: newLang === 'en' }];
     setDecks(updated); saveDecks(updated);
-    setNewName('');
+    setNewName(''); setNewLang('en');
+  }
+
+  function patchDeck(id, patch) {
+    const updated = decks.map(d => d.id === id ? { ...d, ...patch } : d);
+    setDecks(updated); saveDecks(updated);
   }
 
   function renameDeck(id) {
@@ -1960,6 +2047,22 @@ function DecksView({ cards, decks, setDecks }) {
                       {due>0 && <span className="text-xs bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded-full">{due} erääntynyt</span>}
                     </div>
                     <div className="text-gray-500 text-xs mt-0.5">{deckCards.length} korttia · {mastered} hallittu</div>
+                    <div className="flex flex-wrap items-center gap-2 mt-2">
+                      <select value={deck.lang || 'en'} onChange={e => patchDeck(deck.id, { lang: e.target.value })}
+                        className="text-xs bg-gray-700 border border-gray-600 rounded px-1.5 py-1 text-gray-300 focus:outline-none"
+                        title="Kieli: ääntäminen, tekstit ja aksenttinäppäimet">
+                        {Object.entries(LANGS).map(([k, v]) => <option key={k} value={k}>{v.code} · {v.name}</option>)}
+                      </select>
+                      <button onClick={() => patchDeck(deck.id, { smart: deck.smart === false })}
+                        className={`text-xs rounded px-2 py-1 border transition-colors ${
+                          deck.smart === false
+                            ? 'bg-gray-800 border-gray-600 text-gray-500 hover:text-gray-300'
+                            : 'bg-amber-500/15 border-amber-500/40 text-amber-300'
+                        }`}
+                        title="Otetaanko pakka mukaan älykkääseen kertaukseen">
+                        {deck.smart === false ? 'Ei älykkäässä kertauksessa' : '🔀 Älykkäässä kertauksessa'}
+                      </button>
+                    </div>
                   </div>
                   <button onClick={()=>{setEditId(deck.id);setEditName(deck.name);}}
                     className="text-gray-500 hover:text-amber-400 transition-colors p-1" title="Nimeä uudelleen">✏️</button>
@@ -1980,6 +2083,10 @@ function DecksView({ cards, decks, setDecks }) {
             className="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-500"
             placeholder="Pakan nimi, esim. 🏢 Työsanasto"
             onKeyDown={e=>e.key==='Enter'&&createDeck()} />
+          <select value={newLang} onChange={e => setNewLang(e.target.value)}
+            className="bg-gray-700 border border-gray-600 rounded-lg px-2 py-2 text-white text-sm focus:outline-none focus:border-amber-500">
+            {Object.entries(LANGS).map(([k, v]) => <option key={k} value={k}>{v.code}</option>)}
+          </select>
           <button onClick={createDeck} disabled={!newName.trim()}
             className="px-4 py-2 bg-amber-500 hover:bg-amber-400 disabled:bg-gray-600 text-gray-900 font-medium rounded-lg text-sm transition-colors">
             Luo
