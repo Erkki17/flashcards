@@ -392,11 +392,19 @@ function makeCloze(example, front) {
 
 // Stage -> mode. Stage 3 is only reachable in auto mode and only when the
 // example sentence yields a cloze; otherwise the card keeps practising as stage 2.
+// Every 4th review of a stage-2+ card is a listening card instead. Pronunciation
+// is a dimension of word knowledge no other card type touches, and interleaving
+// it beats adding a fourth sequential stage. Deterministic on reviewCount so the
+// same card doesn't flip modes on a re-render mid-session.
+const LISTEN_EVERY = 4;
+
 function getCardDirection(card, direction) {
   if (direction !== 'auto') return direction;
   const stage = card?.stage || 1;
+  if (stage < 2) return 'en-fi';
+  if ((card.reviewCount || 0) % LISTEN_EVERY === LISTEN_EVERY - 1) return 'listen';
   if (stage >= 3 && makeCloze(card.example, card.front)) return 'cloze';
-  return stage >= 2 ? 'fi-en' : 'en-fi';
+  return 'fi-en';
 }
 
 // Ease-factor deltas per button. The original SM-2 formula gives q=4 a delta of
@@ -775,6 +783,7 @@ function DirectionToggle({ direction, setDirection }) {
     { val: 'auto',  label: 'Auto'   },
     { val: 'en-fi', label: 'EN→FI'  },
     { val: 'fi-en', label: 'FI→EN'  },
+    { val: 'listen', label: '🔊'     },
   ];
   function select(val) { setDirection(val); saveDirection(val); }
   return (
@@ -1152,6 +1161,8 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
   const rateRef     = useRef(null);
   const undoTimerRef = useRef(null);
   const lastLogIdRef = useRef(null); // review_log row for the rating undo would reverse
+  const recentRef    = useRef([]);   // last 10 outcomes, drives how fast new cards arrive
+  const replayRef    = useRef(null); // replays the listening prompt, wired below
   const canRateRef  = useRef(true); // false when retype required but not done
 
   // ── Derived values ───────────────────────────────────────────────────────────
@@ -1159,7 +1170,8 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
   const effectiveDir = card ? getCardDirection(card, direction) : 'en-fi';
   const isFiEn       = effectiveDir === 'fi-en';
   const isCloze      = effectiveDir === 'cloze';
-  const isTyping     = isFiEn || isCloze;   // both modes share the typing UI
+  const isListen     = effectiveDir === 'listen';
+  const isTyping     = isFiEn || isCloze || isListen;  // these share the typing UI
   const uniqueInLive = new Set(liveQueue.map(c => c.id)).size;
   const totalUnique  = doneIds.size + uniqueInLive;
   const progressPct  = totalUnique > 0 ? Math.round(doneIds.size / totalUnique * 100) : 0;
@@ -1170,15 +1182,34 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
   ).length;
 
   // ── Auto-inject helper (fires when queue < 20 total cards) ───────────────────
+  // How many new cards to pull in, based on how the last 10 reviews went.
+  // Borrowed from Birdbrain's idea of holding the learner at the edge of their
+  // ability — without its machine learning. A bad run shouldn't pile on new work.
+  function injectCount(queueLen) {
+    const r = recentRef.current;
+    if (r.length < 5) return 5;                       // too early to judge
+    const acc = r.filter(Boolean).length / r.length;
+    let n = acc >= 0.85 ? 7
+          : acc >= 0.70 ? 5
+          : acc >= 0.50 ? 2
+          : 0;
+    // Never let the queue run dry just because accuracy dipped — that would end
+    // the session instead of slowing it down.
+    if (queueLen === 0) n = Math.max(n, 2);
+    return n;
+  }
+
   function autoInject(queue, done) {
     if (queue.length >= 20) return { queue, added: 0 };
+    const want = injectCount(queue.length);
+    if (want === 0) return { queue, added: 0 };
     const ids = new Set(queue.map(c => c.id));
     const eligible = cards.filter(c =>
       (studyDeck == null || c.deck === studyDeck) &&
       !done.has(c.id) && !ids.has(c.id)
     );
     if (eligible.length === 0) return { queue, added: 0 };
-    const toAdd = eligible.slice(0, 5);
+    const toAdd = eligible.slice(0, want);
     return { queue: [...queue, ...toAdd], added: toAdd.length };
   }
 
@@ -1204,6 +1235,14 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
     if (isTyping && phase === 'question') inputRef.current?.focus();
   }, [card?.id, phase, isTyping]);
 
+  // Listening card: play the word on arrival, so the prompt reaches the learner
+  // without a click. Short delay lets the card mount first.
+  useEffect(() => {
+    if (!isListen || phase !== 'question' || !card) return;
+    const t = setTimeout(() => speak(card.front.split(' — ')[0].trim()), 220);
+    return () => clearTimeout(t);
+  }, [card?.id, isListen, phase]);
+
   useEffect(() => {
     function onKey(e) {
       if (showQuit) return;
@@ -1217,6 +1256,9 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
           setPhase(p => p === 'question' ? 'answered' : 'question'); return;
         }
       }
+      if (isListen && e.ctrlKey && e.code === 'Space') {
+        e.preventDefault(); replayRef.current?.(); return;
+      }
       if (phase === 'answered' && canRateRef.current) {
         if      (e.key === 'ArrowLeft')  { e.preventDefault(); rateRef.current(1); }
         else if (e.key === 'ArrowDown')  { e.preventDefault(); rateRef.current(2); }
@@ -1225,7 +1267,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [isTyping, phase, showQuit]);
+  }, [isTyping, isListen, phase, showQuit]);
 
   // ── Session complete (all cards rated Oikein) ────────────────────────────────
   if (liveQueue.length === 0) {
@@ -1244,8 +1286,8 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
   if (!card) return null;
 
   const cloze        = isCloze ? makeCloze(card.example, card.front) : null;
-  const promptText   = isFiEn ? card.back  : card.front;
-  const answerText   = isFiEn ? card.front : card.back;
+  const promptText   = (isFiEn || isListen) ? card.back  : card.front;
+  const answerText   = (isFiEn || isListen) ? card.front : card.back;
   const parsedPrompt = parseBack(promptText);
   const parsedAnswer = parseBack(answerText);
   const cardStage    = card.stage || 1;
@@ -1264,6 +1306,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
     setUndoSnapshot(null);
     // Drop the log row for the rating being reversed
     if (lastLogIdRef.current) { dbDeleteReviewLog(lastLogIdRef.current); lastLogIdRef.current = null; }
+    recentRef.current = recentRef.current.slice(0, -1);  // un-count it for the injector
     // Restore card to pre-rating state
     const restoredCards = cards.map(c => c.id === undoSnapshot.card.id ? undoSnapshot.card : c);
     setCards(restoredCards); saveCards(restoredCards); dbSaveCard(undoSnapshot.card);
@@ -1283,6 +1326,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
     undoTimerRef.current = setTimeout(() => setUndoSnapshot(null), 8000);
 
     const isCorrect = quality >= 4;
+    recentRef.current = [...recentRef.current, isCorrect].slice(-10);
     recordStudy(isCorrect);
     dbRecordStudy(isCorrect);
 
@@ -1377,6 +1421,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
   }
 
   rateRef.current = rate;
+  replayRef.current = () => speak(shortAnswerDisplay);
 
   // Called when Vaikea or Uudestaan is pressed in FI→EN mode — triggers retype first
   function handleFiEnRate(quality) {
@@ -1525,7 +1570,18 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
       {isTyping ? (
         <>
           <div className="bg-gray-800 rounded-2xl p-8 mb-6 border border-gray-700 min-h-[150px] flex flex-col items-center justify-center gap-3">
-            {cloze ? (
+            {isListen ? (
+              /* Listening card: the word is only ever heard, never shown */
+              <>
+                <p className="text-gray-500 text-xs uppercase tracking-wider">Kuuntele ja kirjoita</p>
+                <button type="button" onClick={() => speak(shortAnswerDisplay)}
+                  className="w-20 h-20 rounded-full bg-amber-500/15 border-2 border-amber-500/40 hover:bg-amber-500/25 hover:border-amber-400 text-4xl transition-colors flex items-center justify-center"
+                  title="Toista (Ctrl+välilyönti)">
+                  🔊
+                </button>
+                <p className="text-gray-600 text-xs">Paina tai Ctrl+välilyönti kuullaksesi uudelleen</p>
+              </>
+            ) : cloze ? (
               <>
                 <p className="text-gray-500 text-xs uppercase tracking-wider">Täydennä lause</p>
                 <p className="text-xl text-white text-center leading-relaxed font-mono">{cloze.sentence}</p>
@@ -1538,7 +1594,14 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
                 <button onClick={() => speak(answerText)} className="text-gray-500 hover:text-amber-400 text-xl transition-colors" title="Kuuntele">🔊</button>
               </>
             )}
-            {!cloze && parsedPrompt.hint && (hintShown
+            {isListen && (hintShown
+              ? <p className="text-amber-200/80 text-base text-center">{parseBack(card.back).main}</p>
+              : <button onClick={() => { setHintShown(true); inputRef.current?.focus(); }}
+                  className="text-gray-500 text-xs border border-gray-700 hover:border-amber-500/50 hover:text-amber-400 rounded-lg px-3 py-1.5 transition-colors">
+                  💡 Näytä merkitys
+                </button>
+            )}
+            {!cloze && !isListen && parsedPrompt.hint && (hintShown
               ? <p className="text-gray-400 text-sm text-center italic">{parsedPrompt.hint}</p>
               : <button onClick={() => { setHintShown(true); inputRef.current?.focus(); }}
                   className="text-gray-500 text-xs border border-gray-700 hover:border-amber-500/50 hover:text-amber-400 rounded-lg px-3 py-1.5 transition-colors">
