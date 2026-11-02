@@ -555,6 +555,9 @@ function loadCards() {
 function saveCards(cards) { localStorage.setItem(STORAGE_KEY, JSON.stringify(cards)); }
 function loadDirection()  { return localStorage.getItem(DIRECTION_KEY) || 'auto'; }
 function saveDirection(d) { localStorage.setItem(DIRECTION_KEY, d); }
+const AUTOSPEAK_KEY = 'flashcards_autospeak';
+function loadAutoSpeak()  { return localStorage.getItem(AUTOSPEAK_KEY) !== '0'; }
+function saveAutoSpeak(v) { localStorage.setItem(AUTOSPEAK_KEY, v ? '1' : '0'); }
 function loadHistory() {
   try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '{}'); } catch { return {}; }
 }
@@ -1227,6 +1230,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
   const [feedbackMsg,  setFeedbackMsg]  = useState(null);
   const [newCardsMsg,  setNewCardsMsg]  = useState(null);
   const [showQuit,     setShowQuit]     = useState(false);
+  const [autoSpeak,    setAutoSpeak]    = useState(loadAutoSpeak);
   const [undoSnapshot,    setUndoSnapshot]    = useState(null);
   const [letterHintLevel, setLetterHintLevel] = useState(0);
   const [retypeValue,     setRetypeValue]     = useState('');
@@ -1319,6 +1323,15 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
     const t = setTimeout(() => speak(card.front.split(' — ')[0].trim(), lang), 220);
     return () => clearTimeout(t);
   }, [card?.id, isListen, phase, lang]);
+
+  // Pronounce the target-language word whenever the answer is revealed —
+  // by flipping, typing an answer, or the reveal button. replayRef always
+  // holds this render's word (the cloze form, or the headword).
+  useEffect(() => {
+    if (!autoSpeak || phase !== 'answered' || !card) return;
+    const t = setTimeout(() => replayRef.current?.(), 150);
+    return () => clearTimeout(t);
+  }, [card?.id, phase, autoSpeak]);
 
   useEffect(() => {
     function onKey(e) {
@@ -1630,7 +1643,16 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
             ) : null;
           })()}
         </div>
-        <DirectionToggle direction={direction} setDirection={setDirection} code={L.code} />
+        <div className="flex items-center gap-2">
+          <button onClick={() => { const v = !autoSpeak; setAutoSpeak(v); saveAutoSpeak(v); if (!v) window.speechSynthesis?.cancel(); }}
+            title={autoSpeak ? 'Ääntäminen käännettäessä: päällä' : 'Ääntäminen käännettäessä: pois'}
+            className={`text-xs px-2.5 py-1.5 rounded-lg border transition-colors whitespace-nowrap ${
+              autoSpeak ? 'bg-amber-500/15 border-amber-500/40 text-amber-300' : 'bg-gray-800 border-gray-700 text-gray-500'
+            }`}>
+            {autoSpeak ? '🔈 Ääni' : '🔇 Ääni'}
+          </button>
+          <DirectionToggle direction={direction} setDirection={setDirection} code={L.code} />
+        </div>
       </div>
 
       {/* Queue status */}
