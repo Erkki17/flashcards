@@ -212,10 +212,10 @@ async function dbLoadRetention() {
   const uid = await getUserId();
   if (!uid) return null;
   try {
-    // Only two small columns, and 'new' reviews excluded — a first sighting
-    // carries no retention information.
+    // Only two small columns, and only scheduled reviews — a first sighting carries
+    // no retention information, and a cram answer wasn't due when it was asked.
     const rows = await apiFetch(
-      `/review_log?user_id=eq.${uid}&state=neq.new&select=rating,elapsed_days&limit=100000`
+      `/review_log?user_id=eq.${uid}&state=eq.review&select=rating,elapsed_days&limit=100000`
     );
     if (!rows) return null;
     const acc = { mature: 0, matureOk: 0, young: 0, youngOk: 0, logged: rows.length };
@@ -889,7 +889,7 @@ function NavBar({ view, setView, dueCount, email, syncing, onSync }) {
 
 // ── Home ──────────────────────────────────────────────────────────────────────
 
-function HomeView({ cards, setView, direction, setDirection, decks, onStudyDeck, onSmartStudy, savedSession, onResume, onDismissSession }) {
+function HomeView({ cards, setView, direction, setDirection, decks, onStudyDeck, onCramDeck, onSmartStudy, savedSession, onResume, onDismissSession }) {
   const due    = cards.filter(isDue).length;
   const total  = cards.length;
   const stage1 = cards.filter(c => (c.stage || 1) === 1).length;
@@ -1040,21 +1040,27 @@ function HomeView({ cards, setView, direction, setDirection, decks, onStudyDeck,
             const mastered  = deckCards.filter(c => c.repetitions >= 3).length;
             if (deckCards.length === 0) return null;
             return (
-              <button key={deck.id} onClick={() => onStudyDeck(deck.id)}
-                className="w-full flex items-center gap-3 px-4 py-3 bg-gray-800 hover:bg-gray-750 border border-gray-700 rounded-xl transition-colors text-left"
-                style={{borderColor: dueCount > 0 ? deck.color + '66' : undefined}}>
-                <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{backgroundColor: deck.color}} />
-                <div className="flex-1 min-w-0">
-                  <div className="text-white font-medium text-sm">{deck.name}</div>
-                  <div className="text-gray-500 text-xs">{mastered}/{deckCards.length} hallittu</div>
-                </div>
-                {dueCount > 0 && (
-                  <span className="text-xs font-semibold px-2 py-1 rounded-full shrink-0"
-                    style={{backgroundColor: deck.color + '33', color: deck.color}}>
-                    {dueCount} →
-                  </span>
-                )}
-              </button>
+              <div key={deck.id} className="flex items-stretch gap-2">
+                <button onClick={() => onStudyDeck(deck.id)}
+                  className="flex-1 min-w-0 flex items-center gap-3 px-4 py-3 bg-gray-800 hover:bg-gray-750 border border-gray-700 rounded-xl transition-colors text-left"
+                  style={{borderColor: dueCount > 0 ? deck.color + '66' : undefined}}>
+                  <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{backgroundColor: deck.color}} />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-white font-medium text-sm">{deck.name}</div>
+                    <div className="text-gray-500 text-xs">{mastered}/{deckCards.length} hallittu</div>
+                  </div>
+                  {dueCount > 0 && (
+                    <span className="text-xs font-semibold px-2 py-1 rounded-full shrink-0"
+                      style={{backgroundColor: deck.color + '33', color: deck.color}}>
+                      {dueCount} →
+                    </span>
+                  )}
+                </button>
+                <button onClick={() => onCramDeck(deck.id)} title="Kertaa koko pakka erääntymisestä välittämättä — ei muuta kertausaikataulua"
+                  className="shrink-0 px-3 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-xs font-medium rounded-xl transition-colors">
+                  🎯 Koko pakka
+                </button>
+              </div>
             );
           })}
           {cards.length === 0 && (
@@ -1080,7 +1086,7 @@ function StatCard({ label, value, accent, hint }) {
 
 // ── Session Summary ───────────────────────────────────────────────────────────
 
-function SessionSummaryView({ sessionCards, sessionXP, history, streakData, onDone }) {
+function SessionSummaryView({ sessionCards, sessionXP, history, streakData, onDone, onCram, cramCount, isCram }) {
   const todayKey = dateStr(0);
   const todayCount = history[todayKey]?.reviewed || 0;
   const xp = loadXP();
@@ -1135,6 +1141,14 @@ function SessionSummaryView({ sessionCards, sessionXP, history, streakData, onDo
         <button onClick={onDone} className="w-full py-3 bg-amber-500 hover:bg-amber-400 text-gray-900 font-bold rounded-xl transition-colors text-lg">
           Jatka →
         </button>
+        {onCram && cramCount > 0 && (
+          <div>
+            <button onClick={onCram} className="w-full py-3 bg-gray-700 hover:bg-gray-600 border border-gray-600 text-white font-medium rounded-xl transition-colors">
+              {isCram ? '🔁 Koko pakka uudelleen' : '🎯 Kertaa silti koko pakka'} ({cramCount} korttia)
+            </button>
+            <p className="text-gray-500 text-xs mt-2">Ei muuta kertausaikataulua.</p>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1142,13 +1156,13 @@ function SessionSummaryView({ sessionCards, sessionXP, history, streakData, onDo
 
 // ── Study ─────────────────────────────────────────────────────────────────────
 
-function RatingButtons({ onRate }) {
+function RatingButtons({ onRate, cram }) {
   return (
     <div className="grid grid-cols-3 gap-3">
       {[
         { label: 'Vaikea',    sub: 'pian uudelleen',   q: 1, color: 'bg-red-700 hover:bg-red-600',    key: '←' },
         { label: 'Uudestaan', sub: 'hetken kuluttua',  q: 2, color: 'bg-orange-600 hover:bg-orange-500', key: '↓' },
-        { label: 'Oikein',    sub: 'huomiselle',       q: 4, color: 'bg-green-600 hover:bg-green-500', key: '→' },
+        { label: 'Oikein',    sub: 'huomiselle',       q: 4, color: 'bg-green-600 hover:bg-green-500', key: '→', ...(cram ? { sub: 'pois jonosta' } : {}) },
       ].map(({ label, sub, q, color, key }) => (
         <button key={q} onClick={() => onRate(q)}
           className={`py-2.5 px-2 ${color} text-white font-semibold rounded-xl transition-colors flex flex-col items-center gap-0.5`}>
@@ -1186,7 +1200,10 @@ function AccentBar({ chars, inputRef, value, setValue }) {
   );
 }
 
-function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck, studyMode, decks, savedSession }) {
+function StudyView({ cards, setCards, direction, setDirection, onDone, onCram, studyDeck, studyMode, decks, savedSession }) {
+  // Cram: the whole deck regardless of due dates, for a test. Answers don't touch
+  // the schedule — a review hours after the last one would inflate its intervals.
+  const isCram = studyMode === 'cram';
   // Which cards this session draws from. Declared before the queue state below,
   // whose initialiser uses it. Smart mode skips decks opted out of the mix.
   const nonSmartDecks = new Set((decks || []).filter(d => d.smart === false).map(d => d.id));
@@ -1207,6 +1224,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
       const fresh = restored.filter(c => !seenSet.has(c.id));
       return [...inProgress, ...fresh];
     }
+    if (isCram) return shuffle(cards.filter(inScope));
     if (studyMode === 'smart') return smartSort(cards.filter(c => isDue(c) && inScope(c)));
     return cards.filter(c => isDue(c) && inScope(c));
   });
@@ -1369,6 +1387,9 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
         history={loadHistory()}
         streakData={loadStreak()}
         onDone={onDone}
+        onCram={studyDeck != null ? () => onCram(studyDeck) : null}
+        cramCount={cards.filter(inScope).length}
+        isCram={isCram}
       />
     );
   }
@@ -1429,7 +1450,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
       cardId: card.id,
       reviewedAt: now,
       rating: FSRS_RATING[quality] ?? 3,
-      state: (card.reviewCount || 0) === 0 ? 'new' : 'review',
+      state: isCram ? 'cram' : (card.reviewCount || 0) === 0 ? 'new' : 'review',
       direction: effectiveDir,
       elapsedDays: card.lastReview
         ? Math.max(0, Math.round((now - card.lastReview) / 86400000))
@@ -1437,22 +1458,25 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
     });
     lastLogIdRef.current = logId;
 
-    let updated = sm2(card, quality);
-    updated = { ...updated, stage: cardStage };
-    if (cardStage === 1 && updated.repetitions >= STAGE2_AT) {
-      updated = { ...updated, stage: 2 };
-      setGraduated('🎉 Sana siirtyy tuottovaiheeseen!');
-      setTimeout(() => setGraduated(null), 4000);
-    } else if (cardStage === 2 && updated.repetitions >= STAGE3_AT && makeCloze(card.example, card.front)) {
-      // Only cards whose example sentence yields a cloze move on; the rest
-      // keep practising production, which is still the right task for them.
-      updated = { ...updated, stage: 3 };
-      setGraduated('🎉 Sana siirtyy käyttövaiheeseen — nyt lauseyhteydessä!');
-      setTimeout(() => setGraduated(null), 4000);
+    let newCards = cards;
+    if (!isCram) {
+      let updated = sm2(card, quality);
+      updated = { ...updated, stage: cardStage };
+      if (cardStage === 1 && updated.repetitions >= STAGE2_AT) {
+        updated = { ...updated, stage: 2 };
+        setGraduated('🎉 Sana siirtyy tuottovaiheeseen!');
+        setTimeout(() => setGraduated(null), 4000);
+      } else if (cardStage === 2 && updated.repetitions >= STAGE3_AT && makeCloze(card.example, card.front)) {
+        // Only cards whose example sentence yields a cloze move on; the rest
+        // keep practising production, which is still the right task for them.
+        updated = { ...updated, stage: 3 };
+        setGraduated('🎉 Sana siirtyy käyttövaiheeseen — nyt lauseyhteydessä!');
+        setTimeout(() => setGraduated(null), 4000);
+      }
+      newCards = cards.map(c => c.id === updated.id ? updated : c);
+      setCards(newCards); saveCards(newCards);
+      dbSaveCard(updated);
     }
-    const newCards = cards.map(c => c.id === updated.id ? updated : c);
-    setCards(newCards); saveCards(newCards);
-    dbSaveCard(updated);
 
     // XP
     const xpEarned = XP_BY_Q[quality] || 1;
@@ -1606,6 +1630,12 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
       {/* Session title */}
       {(() => {
         if (studyMode === 'smart') return <div className="text-amber-400 font-semibold text-sm mb-3">🔀 Älykäs kertaus</div>;
+        if (isCram) return (
+          <div className="text-sm mb-3">
+            <span className="text-amber-400 font-semibold">🎯 Koko pakka{decks?.find(dk => dk.id === studyDeck) ? ` — ${decks.find(dk => dk.id === studyDeck).name}` : ''}</span>
+            <span className="text-gray-500 text-xs ml-2">ei muuta kertausaikataulua</span>
+          </div>
+        );
         if (studyDeck && decks) {
           const d = decks.find(dk => dk.id === studyDeck);
           if (d) return <div className="font-semibold text-sm mb-3" style={{color: d.color}}>{d.name}</div>;
@@ -1821,7 +1851,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
               {card.example && (
                 <p className="text-gray-500 text-xs italic text-center">„{card.example}"</p>
               )}
-              <RatingButtons onRate={handleFiEnRate} />
+              <RatingButtons onRate={handleFiEnRate} cram={isCram} />
             </div>
           )}
         </>
@@ -1860,7 +1890,7 @@ function StudyView({ cards, setCards, direction, setDirection, onDone, studyDeck
               <span className="text-gray-500 text-xs border border-gray-600 rounded px-1.5 py-0.5">Enter</span>
             </button>
           ) : (
-            <RatingButtons onRate={rate} />
+            <RatingButtons onRate={rate} cram={isCram} />
           )}
         </>
       )}
@@ -2723,7 +2753,8 @@ function App() {
     return stored;
   });
   const [studyDeck,     setStudyDeck]     = useState(null);
-  const [studyMode,     setStudyMode]     = useState('deck'); // 'deck' | 'smart'
+  const [studyMode,     setStudyMode]     = useState('deck'); // 'deck' | 'smart' | 'cram'
+  const [cramRun,       setCramRun]       = useState(0);      // new key = fresh queue on restart
   const [savedSession,  setSavedSession]  = useState(loadSavedSession);
 
   useEffect(() => {
@@ -2794,6 +2825,11 @@ function App() {
     setStudyDeck(deckId); setStudyMode('deck'); setView('study');
   }
 
+  function handleCramDeck(deckId) {
+    clearSavedSession(); setSavedSession(null);
+    setStudyDeck(deckId); setStudyMode('cram'); setCramRun(n => n + 1); setView('study');
+  }
+
   function handleSmartStudy() {
     clearSavedSession(); setSavedSession(null);
     setStudyDeck(null); setStudyMode('smart'); setView('study');
@@ -2847,8 +2883,8 @@ function App() {
         </div>
       )}
       <main>
-        {view === 'home'    && <HomeView cards={cards} setView={setView} direction={direction} setDirection={setDirection} decks={decks} onStudyDeck={handleStudyDeck} onSmartStudy={handleSmartStudy} savedSession={savedSession} onResume={handleResume} onDismissSession={handleDismissSession} />}
-        {view === 'study'   && <StudyView cards={cards} setCards={setCards} direction={direction} setDirection={setDirection} onDone={handleStudyDone} studyDeck={studyDeck} studyMode={studyMode} decks={decks} savedSession={savedSession} />}
+        {view === 'home'    && <HomeView cards={cards} setView={setView} direction={direction} setDirection={setDirection} decks={decks} onStudyDeck={handleStudyDeck} onCramDeck={handleCramDeck} onSmartStudy={handleSmartStudy} savedSession={savedSession} onResume={handleResume} onDismissSession={handleDismissSession} />}
+        {view === 'study'   && <StudyView key={`${studyMode}:${studyDeck}:${cramRun}`} cards={cards} setCards={setCards} direction={direction} setDirection={setDirection} onDone={handleStudyDone} onCram={handleCramDeck} studyDeck={studyDeck} studyMode={studyMode} decks={decks} savedSession={savedSession} />}
         {view === 'add'     && <AddCardView cards={cards} setCards={setCards} editCard={editCard} setEditCard={setEditCard} decks={decks} />}
         {view === 'import'  && <ImportView cards={cards} setCards={setCards} decks={decks} />}
         {view === 'manage'  && <ManageView cards={cards} setCards={setCards} setEditCard={setEditCard} setView={setView} decks={decks} />}
